@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/isaiah/ghost-radigo/internal/fetcher"
+	"github.com/isaiah/ghost-radigo/internal/logger"
 	"github.com/isaiah/ghost-radigo/internal/mixer"
 	"github.com/isaiah/ghost-radigo/internal/processor"
 	"github.com/isaiah/ghost-radigo/internal/scanner"
@@ -46,27 +46,27 @@ func main() {
 	// Run all stages concurrently.
 	go func() {
 		if err := fetch.Run(ctx); err != nil {
-			log.Printf("fetcher: %v", err)
+			logger.Error("fetcher: %v", err)
 		}
 	}()
 	go func() {
 		if err := scan.Run(ctx); err != nil {
-			log.Printf("scanner: %v", err)
+			logger.Error("scanner: %v", err)
 		}
 	}()
 	go func() {
 		if err := pool.Run(ctx); err != nil {
-			log.Printf("processor pool: %v", err)
+			logger.Error("processor pool: %v", err)
 		}
 	}()
 	go func() {
 		if err := mix.Run(ctx); err != nil {
-			log.Printf("mixer: %v", err)
+			logger.Error("mixer: %v", err)
 		}
 	}()
 
-	log.Printf("ghost radio listening on %s", addr)
+	logger.Info("ghost radio listening on %s", addr)
 	if err := srv.Run(ctx); err != nil {
-		log.Printf("server: %v", err)
+		logger.Error("server: %v", err)
 	}
 }

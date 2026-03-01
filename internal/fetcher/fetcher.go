@@ -2,10 +2,11 @@ package fetcher
 
 import (
 	"context"
-	"log"
 	"math/rand"
 	"net/http"
 	"time"
+
+	"github.com/isaiah/ghost-radigo/internal/logger"
 )
 
 const (
@@ -53,7 +54,7 @@ func (f *Fetcher) Run(ctx context.Context) error {
 
 		docs, err := f.search(ctx, query, start)
 		if err != nil {
-			log.Printf("fetcher: search %q page %d: %v", query, start/pageSize, err)
+			logger.Warn("fetcher: search %q page %d: %v", query, start/pageSize, err)
 			if !sleepCtx(ctx, errorDelay) {
 				return nil
 			}
@@ -70,7 +71,7 @@ func (f *Fetcher) Run(ctx context.Context) error {
 
 			item, err := f.resolveItem(ctx, doc)
 			if err != nil {
-				log.Printf("fetcher: skip %s: %v", doc.Identifier, err)
+				logger.Warn("fetcher: skip %s: %v", doc.Identifier, err)
 				continue
 			}
 

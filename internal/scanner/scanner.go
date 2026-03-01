@@ -10,9 +10,9 @@ import (
 
 const (
 	bufferSize   = 32   // max MediaItems held locally
-	minClip      = 3.0  // seconds
-	maxClip      = 20.0 // seconds
-	silenceProb  = 0.05 // 5% chance of emitting a silence gap
+	minClip      = 1.5  // seconds
+	maxClip      = 5.0  // seconds
+	silenceProb  = 0.40 // 40% chance of emitting a noise gap between clips
 
 	// Drift parameters.
 	normalDriftMax  = 3.0  // max year change per clip under normal drift

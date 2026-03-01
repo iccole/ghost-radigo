@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"math/rand"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/isaiah/ghost-radigo/internal/logger"
 	"github.com/isaiah/ghost-radigo/internal/scanner"
 )
 
@@ -60,9 +60,15 @@ func (w *Worker) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
+			if job.Silence {
+				logger.Info("clip  noise  dur=%.1fs", job.Duration)
+			} else {
+				logger.Info("clip  %s  year=%d  offset=%.1fs  dur=%.1fs  title=%q  url=%s",
+					job.Item.Identifier, job.Item.Year, job.Offset, job.Duration, job.Item.Title, job.Item.FileURL)
+			}
 			clip, err := w.process(ctx, job)
 			if err != nil {
-				log.Printf("processor[%d]: %s offset=%.1fs: %v",
+				logger.Error("processor[%d]: %s offset=%.1fs: %v",
 					w.id, job.Item.Identifier, job.Offset, err)
 				continue
 			}
@@ -79,7 +85,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) process(ctx context.Context, job scanner.ClipJob) (ProcessedClip, error) {
 	if job.Silence {
-		return generateSilence(ctx, job.Duration)
+		return generateNoise(ctx, job.Duration)
 	}
 	return w.extractClip(ctx, job)
 }
@@ -144,27 +150,41 @@ func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (Processe
 	}, nil
 }
 
-// generateSilence uses ffmpeg's lavfi source to produce a silent MP3 segment.
-func generateSilence(ctx context.Context, dur float64) (ProcessedClip, error) {
+// generateNoise uses ffmpeg's lavfi anoisesrc to produce a quiet pink-noise
+// segment — more atmospheric than dead silence between archive clips.
+func generateNoise(ctx context.Context, dur float64) (ProcessedClip, error) {
+	fade := 0.4
+	if dur < 1.2 {
+		fade = dur * 0.2
+	}
+	fadeOutStart := dur - fade
+
+	afFilter := fmt.Sprintf(
+		"afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f,lowpass=f=3500",
+		fade, fadeOutStart, fade,
+	)
+
 	args := []string{
 		"-loglevel", "error",
 		"-f", "lavfi",
-		"-i", fmt.Sprintf("anullsrc=r=%s:cl=stereo", sampleRate),
+		"-i", fmt.Sprintf("anoisesrc=r=%s:color=pink:amplitude=0.018", sampleRate),
 		"-t", fmt.Sprintf("%.3f", dur),
+		"-ac", channels,
+		"-af", afFilter,
 		"-b:a", bitrate,
 		"-f", format,
 		"pipe:1",
 	}
 
-	silCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	noiseCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(silCtx, "ffmpeg", args...)
+	cmd := exec.CommandContext(noiseCtx, "ffmpeg", args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
 	if err := cmd.Run(); err != nil {
-		return ProcessedClip{}, fmt.Errorf("silence: %w", err)
+		return ProcessedClip{}, fmt.Errorf("noise: %w", err)
 	}
 
 	return ProcessedClip{
@@ -198,7 +218,7 @@ func (p *Pool) Run(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			if err := w.Run(ctx); err != nil {
-				log.Printf("processor worker %d: %v", w.id, err)
+				logger.Error("processor worker %d: %v", w.id, err)
 			}
 		}()
 	}

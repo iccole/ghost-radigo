@@ -8,8 +8,8 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   body {
-    background: #0d0a07;
-    color: #c8811a;
+    background: #06080b;
+    color: #7a9ab8;
     font-family: 'Courier New', Courier, monospace;
     height: 100vh;
     display: flex;
@@ -20,16 +20,25 @@
     user-select: none;
   }
 
+  /* TV static — sparse bright flashes on dark canvas, screen blend */
   #grain {
     position: fixed;
     inset: 0;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 1.2s ease;
+    transition: opacity 2s ease;
     z-index: 10;
+    mix-blend-mode: screen;
   }
-
   #grain.active { opacity: 1; }
+
+  .vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 35%, rgba(2,4,8,0.9) 100%);
+    z-index: 0;
+  }
 
   .station {
     position: relative;
@@ -38,105 +47,101 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2rem;
+    gap: 2.2rem;
   }
 
   .title {
-    font-size: clamp(2.5rem, 8vw, 5rem);
+    font-size: clamp(2.4rem, 8vw, 5rem);
     font-weight: 700;
-    letter-spacing: 0.35em;
-    text-shadow: 0 0 30px rgba(200, 129, 26, 0.5);
+    letter-spacing: 0.45em;
+    color: #b8d4ee;
+    text-shadow:
+      0 0 30px rgba(120, 170, 220, 0.35),
+      0 0 80px rgba(80, 130, 190, 0.12);
+  }
+
+  .title.receiving {
+    animation: signal-flicker 9s ease-in-out infinite;
+  }
+
+  @keyframes signal-flicker {
+    0%, 93%, 100% { opacity: 1; }
+    94%  { opacity: 0.55; }
+    95%  { opacity: 0.9; }
+    96%  { opacity: 0.4; }
+    97%  { opacity: 1; }
   }
 
   .subtitle {
-    font-size: clamp(0.6rem, 2vw, 0.85rem);
-    letter-spacing: 0.4em;
-    color: #7a4e10;
-    margin-top: -1.5rem;
+    font-size: clamp(0.52rem, 1.6vw, 0.72rem);
+    letter-spacing: 0.5em;
+    color: #1e3048;
+    margin-top: -1.8rem;
   }
 
-  .dial-band {
-    font-size: clamp(0.65rem, 1.8vw, 0.8rem);
-    letter-spacing: 0.3em;
-    color: #5c3b0c;
-    border-top: 1px solid #2a1e0e;
-    border-bottom: 1px solid #2a1e0e;
-    padding: 0.4rem 2rem;
+  .divider {
     width: 100%;
-    text-align: center;
+    border: none;
+    border-top: 1px solid #0c1620;
   }
 
   #year-display {
     font-size: clamp(3rem, 10vw, 6rem);
     font-weight: 700;
-    letter-spacing: 0.1em;
-    color: #e09020;
-    text-shadow: 0 0 40px rgba(224, 144, 32, 0.4);
+    letter-spacing: 0.08em;
+    color: #4a70a0;
     min-width: 8ch;
     text-align: center;
-    transition: color 0.5s;
+    transition: color 0.6s;
   }
 
   .controls {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 1rem;
+    gap: 1.2rem;
   }
 
   #status {
-    font-size: 0.75rem;
-    letter-spacing: 0.4em;
-    color: #5c3b0c;
+    font-size: 0.68rem;
+    letter-spacing: 0.5em;
+    color: #1e3048;
     height: 1.2em;
+    transition: color 0.4s;
   }
 
-  #status.on-air {
-    color: #c8811a;
+  #status.receiving { color: #5a80a8; }
+
+  #status .dot { display: inline-block; }
+
+  #status.receiving .dot {
+    animation: breathe 3s ease-in-out infinite;
   }
 
-  #status .dot {
-    display: inline-block;
-  }
-
-  #status.on-air .dot {
-    animation: blink 1.2s step-start infinite;
-  }
-
-  @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0; }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.15; }
+    50%       { opacity: 1; }
   }
 
   #tune-btn {
     background: none;
-    border: 1px solid #c8811a;
-    color: #c8811a;
+    border: 1px solid #122030;
+    color: #3a5878;
     font-family: inherit;
-    font-size: 0.8rem;
-    letter-spacing: 0.4em;
+    font-size: 0.72rem;
+    letter-spacing: 0.5em;
     padding: 0.7rem 2.5rem;
     cursor: pointer;
-    transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+    transition: border-color 0.3s, color 0.3s, box-shadow 0.3s;
   }
 
   #tune-btn:hover {
-    background: #c8811a;
-    color: #0d0a07;
-    box-shadow: 0 0 20px rgba(200, 129, 26, 0.4);
+    border-color: #5a80a8;
+    color: #b8d4ee;
+    box-shadow: 0 0 24px rgba(80, 130, 190, 0.12);
   }
 
-  #tune-btn:active {
-    transform: scale(0.97);
-  }
-
-  .vignette {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.7) 100%);
-    z-index: 0;
-  }
+  #tune-btn:active { transform: scale(0.97); }
 </style>
 </head>
 <body>
@@ -146,16 +151,16 @@
 
 <div class="station">
   <div>
-    <div class="title">GHOST RADIO</div>
-    <div class="subtitle">ARCHIVE.ORG / 1900–1980</div>
+    <div class="title" id="title">GHOST RADIO</div>
+    <div class="subtitle">UNKNOWN SIGNAL · 1900—1980</div>
   </div>
 
-  <div class="dial-band">AM · SW · FM · OPEN BAND</div>
+  <hr class="divider">
 
   <div id="year-display">——</div>
 
   <div class="controls">
-    <div id="status"><span class="dot">●</span>&nbsp;IDLE</div>
+    <div id="status"><span class="dot">◌</span>&nbsp;IDLE</div>
     <button id="tune-btn">TUNE IN</button>
   </div>
 </div>
@@ -166,10 +171,10 @@
 (function () {
   'use strict';
 
-  // ── Film grain ──────────────────────────────────────────────────────────────
+  // ── TV static ───────────────────────────────────────────────────────────────
   const canvas = document.getElementById('grain');
   const ctx    = canvas.getContext('2d');
-  let grainRaf = null;
+  let grainTimer = null;
 
   function resizeCanvas() {
     canvas.width  = window.innerWidth;
@@ -178,98 +183,111 @@
   window.addEventListener('resize', resizeCanvas);
   resizeCanvas();
 
-  function drawGrain() {
+  function drawStatic() {
     const w = canvas.width, h = canvas.height;
     const img = ctx.createImageData(w, h);
     const d   = img.data;
     for (let i = 0; i < d.length; i += 4) {
-      const v = Math.random() * 255 | 0;
-      d[i] = d[i+1] = d[i+2] = v;
-      d[i+3] = 18; // very low opacity per pixel
+      // Sparse bright flashes — most pixels stay dark (transparent)
+      if (Math.random() < 0.055) {
+        const v = 160 + (Math.random() * 95 | 0);
+        d[i] = d[i+1] = d[i+2] = v;
+        d[i+3] = 25 + (Math.random() * 40 | 0);
+      }
+      // else d[i+3] stays 0 — fully transparent
     }
     ctx.putImageData(img, 0, 0);
-    grainRaf = setTimeout(() => requestAnimationFrame(drawGrain), 80); // ~12 fps
+    grainTimer = setTimeout(() => requestAnimationFrame(drawStatic), 80); // ~12 fps
   }
 
-  function startGrain() {
-    canvas.classList.add('active');
-    drawGrain();
-  }
-
-  function stopGrain() {
+  function startGrain() { canvas.classList.add('active'); drawStatic(); }
+  function stopGrain()  {
     canvas.classList.remove('active');
-    clearTimeout(grainRaf);
-    grainRaf = null;
+    clearTimeout(grainTimer);
+    grainTimer = null;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  // ── Year drift ──────────────────────────────────────────────────────────────
+  // ── Year drift with digit glitch ────────────────────────────────────────────
   let yearFloat = 1920 + Math.random() * 40;
-  let yearDrift = (Math.random() - 0.5) * 0.4;
-  let yearRaf   = null;
+  let yearDrift = (Math.random() - 0.5) * 0.45;
+  let yearTimer = null;
+  let glitchCooldown = 0;
+
+  const yearEl = document.getElementById('year-display');
 
   function tickYear() {
     yearFloat += yearDrift;
-    // Soft boundary bounce
     if (yearFloat < 1900) { yearFloat = 1900; yearDrift =  Math.abs(yearDrift); }
     if (yearFloat > 1980) { yearFloat = 1980; yearDrift = -Math.abs(yearDrift); }
-    // Occasional random nudge
-    if (Math.random() < 0.008) yearDrift += (Math.random() - 0.5) * 0.3;
-    yearDrift = Math.max(-1.2, Math.min(1.2, yearDrift));
+    if (Math.random() < 0.007) yearDrift += (Math.random() - 0.5) * 0.5;
+    yearDrift = Math.max(-1.5, Math.min(1.5, yearDrift));
 
-    document.getElementById('year-display').textContent = Math.round(yearFloat);
-    yearRaf = setTimeout(tickYear, 120);
+    if (glitchCooldown <= 0 && Math.random() < 0.025) {
+      // Flash a wrong year for 70ms, then snap back
+      const ghost = Math.round(yearFloat) + Math.floor((Math.random() - 0.5) * 24);
+      yearEl.textContent = ghost;
+      yearEl.style.opacity = '0.35';
+      glitchCooldown = 10;
+      setTimeout(() => {
+        yearEl.textContent = Math.round(yearFloat);
+        yearEl.style.opacity = '';
+      }, 70);
+    } else {
+      if (glitchCooldown > 0) glitchCooldown--;
+      yearEl.textContent = Math.round(yearFloat);
+    }
+    yearTimer = setTimeout(tickYear, 130);
   }
 
   function startYear() { tickYear(); }
-
-  function stopYear() {
-    clearTimeout(yearRaf);
-    yearRaf = null;
-    document.getElementById('year-display').textContent = '——';
+  function stopYear()  {
+    clearTimeout(yearTimer);
+    yearTimer = null;
+    yearEl.textContent = '——';
+    yearEl.style.opacity = '';
   }
 
-  // ── Audio & UI state ────────────────────────────────────────────────────────
-  const audio   = document.getElementById('audio');
-  const btn     = document.getElementById('tune-btn');
-  const status  = document.getElementById('status');
-  let playing   = false;
+  // ── Audio & UI ──────────────────────────────────────────────────────────────
+  const audio  = document.getElementById('audio');
+  const btn    = document.getElementById('tune-btn');
+  const status = document.getElementById('status');
+  const title  = document.getElementById('title');
+  let playing  = false;
 
-  function setOnAir(on) {
+  function setReceiving(on) {
     if (on) {
-      status.className = 'on-air';
-      status.innerHTML = '<span class="dot">●</span>&nbsp;ON AIR';
+      status.className = 'receiving';
+      status.innerHTML = '<span class="dot">◌</span>&nbsp;RECEIVING';
       btn.textContent  = 'TUNE OUT';
+      title.classList.add('receiving');
     } else {
       status.className = '';
-      status.innerHTML = '<span class="dot">●</span>&nbsp;IDLE';
+      status.innerHTML = '<span class="dot">◌</span>&nbsp;IDLE';
       btn.textContent  = 'TUNE IN';
+      title.classList.remove('receiving');
     }
   }
 
   function tuneIn() {
     playing = true;
-    setOnAir(true);
+    setReceiving(true);
     startGrain();
     startYear();
     audio.src = '/listen';
-    audio.play().catch(() => {/* autoplay policy — user gesture already fired */});
+    audio.play().catch(() => {});
   }
 
   function tuneOut() {
     playing = false;
-    setOnAir(false);
+    setReceiving(false);
     stopGrain();
     stopYear();
     audio.pause();
-    audio.src = ''; // release the HTTP connection
+    audio.src = '';
   }
 
-  btn.addEventListener('click', function () {
-    if (playing) tuneOut(); else tuneIn();
-  });
-
-  // If the stream ends unexpectedly, reset UI
+  btn.addEventListener('click', () => { if (playing) tuneOut(); else tuneIn(); });
   audio.addEventListener('ended', tuneOut);
   audio.addEventListener('error', tuneOut);
 })();
