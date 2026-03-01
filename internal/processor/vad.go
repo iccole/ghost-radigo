@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -67,6 +68,14 @@ func vadScore(ctx context.Context, url string, offset, dur float64) (float64, er
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		// HTTP auth failures (401/403) will also fail the encode — reject now
+		// rather than wasting a second round-trip. Any other error (network
+		// hiccup, unsupported format) fails open so we don't drop valid content.
+		se := stderr.String()
+		if strings.Contains(se, "401") || strings.Contains(se, "403") ||
+			strings.Contains(se, "Unauthorized") || strings.Contains(se, "Forbidden") {
+			return 0, nil // score 0 → below threshold → rejected cleanly
+		}
 		return 0, fmt.Errorf("vad probe: %w", err)
 	}
 

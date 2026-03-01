@@ -32,19 +32,32 @@ var preferredFormats = []string{
 }
 
 // searchQueries rotates across collections and subjects to produce variety.
-// Each targets a distinct aesthetic slice of the archive.
+// All entries target content that is reliably publicly accessible:
+//   - Named collections that are structurally open (78rpm, OTR, etree, librivox, radio)
+//   - Broad subject searches anchored to the public-domain era with year ranges
+//
+// The base query in search() appends -access-restricted:1 to every entry,
+// which filters out items flagged as restricted in the Archive index.
 var searchQueries = []string{
-	`mediatype:audio collection:78rpm`,
-	`mediatype:audio collection:oldtimeradio`,
-	`mediatype:audio collection:etree`,
-	`mediatype:audio subject:jazz`,
-	`mediatype:audio subject:blues`,
-	`mediatype:audio subject:folk`,
-	`mediatype:audio subject:classical`,
-	`mediatype:audio subject:speech`,
-	`mediatype:audio subject:radio`,
-	`mediatype:audio subject:gospel`,
-	`mediatype:audio subject:field recording`,
+	// Curated Archive.org collections — always open, broad content variety
+	`collection:78rpm`,
+	`collection:oldtimeradio`,
+	`collection:etree`,
+	`collection:librivox`,
+	`collection:radio`,
+	`collection:opensource_audio`,
+	`collection:audio_bookspoetry`,
+
+	// Subject searches anchored to the public-domain era
+	`mediatype:audio subject:jazz year:[1900 TO 1955]`,
+	`mediatype:audio subject:blues year:[1900 TO 1955]`,
+	`mediatype:audio subject:folk year:[1900 TO 1955]`,
+	`mediatype:audio subject:classical year:[1900 TO 1955]`,
+	`mediatype:audio subject:gospel year:[1920 TO 1960]`,
+	`mediatype:audio subject:"spoken word"`,
+	`mediatype:audio subject:"field recording"`,
+	`mediatype:audio subject:comedy year:[1920 TO 1960]`,
+	`mediatype:audio subject:news year:[1930 TO 1970]`,
 }
 
 // searchDoc is a single result from the Archive.org search API.
@@ -66,7 +79,7 @@ type iaFile struct {
 // search queries the Archive.org full-text search API and returns docs that
 // have at least one preferred audio format.
 func (f *Fetcher) search(ctx context.Context, query string, start int) ([]searchDoc, error) {
-	q := query + ` AND format:(MP3 OR "Ogg Vorbis")`
+	q := query + ` AND format:(MP3 OR "Ogg Vorbis") AND NOT access-restricted:1`
 
 	params := url.Values{}
 	params.Set("q", q)
