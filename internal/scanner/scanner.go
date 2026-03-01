@@ -10,7 +10,7 @@ import (
 
 const (
 	bufferSize   = 32   // max MediaItems held locally
-	minClip      = 1.5  // seconds
+	minClip      = 0.4  // seconds — short enough to capture individual phonemes
 	maxClip      = 5.0  // seconds
 	silenceProb  = 0.40 // 40% chance of emitting a noise gap between clips
 

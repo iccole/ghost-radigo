@@ -3,6 +3,7 @@ package processor
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os/exec"
@@ -25,6 +26,11 @@ const (
 	channels   = "2"
 	bitrate    = "128k"
 	format     = "mp3"
+
+	// reversalProb is the probability that a clip is time-reversed before
+	// playback — an EVP technique that creates disorienting backwards-voice
+	// fragments while preserving the phoneme bed.
+	reversalProb = 0.15
 )
 
 // ProcessedClip holds the encoded audio bytes for a single clip.
@@ -63,14 +69,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if job.Silence {
-				logger.Info("clip  noise  dur=%.1fs", job.Duration)
-			} else {
-				logger.Info("clip  %s  year=%d  offset=%.1fs  dur=%.1fs  title=%q  url=%s",
-					job.Item.Identifier, job.Item.Year, job.Offset, job.Duration, job.Item.Title, job.Item.FileURL)
-			}
 			clip, err := w.process(ctx, job)
 			if err != nil {
+				if errors.Is(err, errVADReject) {
+					logger.Debug("vad skip  %s  offset=%.1fs", job.Item.Identifier, job.Offset)
+					continue
+				}
 				logger.Error("processor[%d]: %s offset=%.1fs: %v",
 					w.id, job.Item.Identifier, job.Offset, err)
 				continue
@@ -88,6 +92,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 func (w *Worker) process(ctx context.Context, job scanner.ClipJob) (ProcessedClip, error) {
 	if job.Silence {
+		logger.Info("clip  noise  dur=%.1fs", job.Duration)
 		return generateNoise(ctx, job.Duration)
 	}
 	return w.extractClip(ctx, job)
@@ -95,31 +100,55 @@ func (w *Worker) process(ctx context.Context, job scanner.ClipJob) (ProcessedCli
 
 // extractClip runs ffmpeg to pull a segment from a remote URL and encode it
 // to MP3 with fades, loudness normalisation, and a light bandpass filter.
+//
+// Before encoding, a VAD probe checks for voice-band energy. Clips that score
+// below vadThreshold are rejected with errVADReject. On probe failure the clip
+// is accepted anyway — we prefer false positives over dropping valid content.
+//
+// A random 15% of clips are time-reversed (areverse) for an EVP-style effect.
 func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (ProcessedClip, error) {
+	// VAD probe — analysis-only pass, no encoding.
+	score, err := vadScore(ctx, job.Item.FileURL, job.Offset, job.Duration)
+	if err != nil {
+		// Probe failed (network hiccup, unsupported format, etc.) — accept.
+		logger.Warn("vad probe %s: %v — accepting", job.Item.Identifier, err)
+	} else if score < vadThreshold {
+		return ProcessedClip{}, errVADReject
+	}
+
+	reversed := w.rng.Float64() < reversalProb
+	logger.Info("clip  %s  year=%d  offset=%.1fs  dur=%.1fs  vad=%.2f  rev=%v  title=%q",
+		job.Item.Identifier, job.Item.Year, job.Offset, job.Duration, score, reversed, job.Item.Title)
+
 	fadeIn := 0.3 + w.rng.Float64()*0.5  // 0.3–0.8 s
 	fadeOut := 0.3 + w.rng.Float64()*0.5 // 0.3–0.8 s
-	// Ensure fades fit inside the clip.
 	if fadeIn+fadeOut >= job.Duration {
 		fadeIn = job.Duration * 0.2
 		fadeOut = job.Duration * 0.2
 	}
 	fadeOutStart := job.Duration - fadeOut
 
-	// Build the audio filter chain:
-	//   afade in/out       — soft clip boundaries
-	//   loudnorm           — EBU R128 single-pass normalisation
-	//   highpass/lowpass   — gentle bandpass for that archival warmth
-	afFilter := fmt.Sprintf(
-		"afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f,loudnorm=I=-16:LRA=11:TP=-1.5,highpass=f=80,lowpass=f=8000",
-		fadeIn, fadeOutStart, fadeOut,
-	)
+	// areverse (when used) comes first so fades are applied to the
+	// already-reversed audio, giving natural in/out on the backwards clip.
+	var afFilter string
+	if reversed {
+		afFilter = fmt.Sprintf(
+			"areverse,afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f,loudnorm=I=-16:LRA=11:TP=-1.5,highpass=f=80,lowpass=f=8000",
+			fadeIn, fadeOutStart, fadeOut,
+		)
+	} else {
+		afFilter = fmt.Sprintf(
+			"afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f,loudnorm=I=-16:LRA=11:TP=-1.5,highpass=f=80,lowpass=f=8000",
+			fadeIn, fadeOutStart, fadeOut,
+		)
+	}
 
 	args := []string{
 		"-loglevel", "error",
 		"-ss", fmt.Sprintf("%.3f", job.Offset), // fast seek before -i
 		"-i", job.Item.FileURL,
 		"-t", fmt.Sprintf("%.3f", job.Duration),
-		"-vn",          // discard video
+		"-vn", // discard video
 		"-af", afFilter,
 		"-ar", sampleRate,
 		"-ac", channels,
