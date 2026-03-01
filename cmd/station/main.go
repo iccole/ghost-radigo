@@ -9,7 +9,7 @@ import (
 
 	"github.com/isaiah/ghost-radigo/internal/fetcher"
 	"github.com/isaiah/ghost-radigo/internal/logger"
-	"github.com/isaiah/ghost-radigo/internal/mixer"
+	"github.com/isaiah/ghost-radigo/internal/pool"
 	"github.com/isaiah/ghost-radigo/internal/processor"
 	"github.com/isaiah/ghost-radigo/internal/scanner"
 	"github.com/isaiah/ghost-radigo/internal/server"
@@ -17,7 +17,7 @@ import (
 
 const (
 	addr           = ":8080"
-	processorCount = 3
+	processorCount = 5
 	seed           = 0 // 0 = derive from current time
 )
 
@@ -27,8 +27,8 @@ func main() {
 
 	// Channels connecting pipeline stages.
 	mediaC := make(chan fetcher.MediaItem, 16)
-	jobC := make(chan scanner.ClipJob, 8)
-	clipC := make(chan processor.ProcessedClip, 4)
+	jobC   := make(chan scanner.ClipJob, 8)
+	clipC  := make(chan processor.ProcessedClip, 4)
 
 	// Resolve seed.
 	s := int64(seed)
@@ -37,12 +37,11 @@ func main() {
 	}
 
 	// Assemble pipeline.
-	fetch := fetcher.New(mediaC)
-	scan := scanner.New(mediaC, jobC, s)
-	pool := processor.NewPool(processorCount, jobC, clipC)
-	srv := server.New(addr)
-	mix := mixer.New(clipC, srv)
-	mix.OnClip = srv.UpdateNowPlaying
+	fetch    := fetcher.New(mediaC)
+	scan     := scanner.New(mediaC, jobC, s)
+	procPool := processor.NewPool(processorCount, jobC, clipC)
+	clipPool := pool.New(clipC)
+	srv      := server.New(addr, clipPool)
 
 	// Run all stages concurrently.
 	go func() {
@@ -56,13 +55,13 @@ func main() {
 		}
 	}()
 	go func() {
-		if err := pool.Run(ctx); err != nil {
+		if err := procPool.Run(ctx); err != nil {
 			logger.Error("processor pool: %v", err)
 		}
 	}()
 	go func() {
-		if err := mix.Run(ctx); err != nil {
-			logger.Error("mixer: %v", err)
+		if err := clipPool.Run(ctx); err != nil {
+			logger.Error("pool: %v", err)
 		}
 	}()
 

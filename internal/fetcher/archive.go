@@ -20,44 +20,58 @@ const (
 	maxPageStart = 10000
 )
 
-// preferredFormats lists audio formats in descending order of preference.
-// Video formats are excluded — we filter at query time to avoid unnecessary
-// metadata calls for video-only items.
+// preferredFormats lists formats in descending order of preference.
+// Audio formats are tried first. Video formats (MPEG4, h.264) are included
+// at lower priority so the processor can extract audio via ffmpeg -vn from
+// movie items such as Flash cartoons that have no separate audio track.
 var preferredFormats = []string{
 	"VBR MP3",
 	"128Kbps MP3",
 	"64Kbps MP3",
 	"MP3",
 	"Ogg Vorbis",
+	// Video containers — ffmpeg extracts audio with -vn
+	"512Kb MPEG4",
+	"MPEG4",
+	"h.264",
 }
 
-// searchQueries rotates across collections and subjects to produce variety.
-// All entries target content that is reliably publicly accessible:
-//   - Named collections that are structurally open (78rpm, OTR, etree, librivox, radio)
-//   - Broad subject searches anchored to the public-domain era with year ranges
+// searchQueries rotates across collections and subjects.
+// Focused on spoken-word content: voice, dialogue, narration, comedy, news.
+// Music-heavy collections (78rpm, etree) are excluded in favour of speech.
 //
-// The base query in search() appends -access-restricted:1 to every entry,
-// which filters out items flagged as restricted in the Archive index.
+// Flash cartoon collections (Strongbad, Homestar Runner) are included via
+// mediatype:movies queries; video files are handled by the processor's ffmpeg
+// pipeline which discards the video track and keeps the audio.
+//
+// The base query in search() appends NOT access-restricted:1 to every entry.
 var searchQueries = []string{
-	// Curated Archive.org collections — always open, broad content variety
-	`collection:78rpm`,
+	// Spoken-word audio collections
 	`collection:oldtimeradio`,
-	`collection:etree`,
 	`collection:librivox`,
 	`collection:radio`,
 	`collection:opensource_audio`,
 	`collection:audio_bookspoetry`,
 
-	// Subject searches anchored to the public-domain era
-	`mediatype:audio subject:jazz year:[1900 TO 1955]`,
-	`mediatype:audio subject:blues year:[1900 TO 1955]`,
-	`mediatype:audio subject:folk year:[1900 TO 1955]`,
-	`mediatype:audio subject:classical year:[1900 TO 1955]`,
-	`mediatype:audio subject:gospel year:[1920 TO 1960]`,
+	// Speech-forward subject searches
 	`mediatype:audio subject:"spoken word"`,
 	`mediatype:audio subject:"field recording"`,
-	`mediatype:audio subject:comedy year:[1920 TO 1960]`,
-	`mediatype:audio subject:news year:[1930 TO 1970]`,
+	`mediatype:audio subject:speech`,
+	`mediatype:audio subject:lecture`,
+	`mediatype:audio subject:interview`,
+	`mediatype:audio subject:comedy year:[1930 TO 1980]`,
+	`mediatype:audio subject:news year:[1930 TO 1980]`,
+	`mediatype:audio subject:gospel year:[1930 TO 1970]`,
+	`mediatype:audio subject:drama year:[1930 TO 1970]`,
+
+	// Flash cartoons and animation — dialogue-rich video content
+	// SWF originals are mediatype:software and unplayable; target movies
+	// derivatives which have MP4 files ffmpeg can decode.
+	`mediatype:movies subject:"strong bad"`,
+	`mediatype:movies subject:"homestar runner"`,
+	`mediatype:movies subject:"flash cartoon"`,
+	`mediatype:movies subject:"flash animation"`,
+	`collection:softwarelibrary_flash_animation mediatype:movies`,
 }
 
 // searchDoc is a single result from the Archive.org search API.

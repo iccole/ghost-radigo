@@ -9,21 +9,21 @@ import (
 	"sync"
 
 	"github.com/a-h/templ"
+	"github.com/isaiah/ghost-radigo/internal/pool"
 	"github.com/isaiah/ghost-radigo/internal/server/templates"
 )
 
-// Server exposes the HTTP endpoints and broadcasts the audio stream.
+// Server exposes the HTTP endpoints and streams on-demand audio from the pool.
 type Server struct {
-	stream     *Broadcast
+	clips      *pool.Pool
 	srv        *http.Server
 	mu         sync.RWMutex
 	nowPlaying templates.NowPlaying
 }
 
-// New creates a Server that listens on addr.
-func New(addr string) *Server {
-	b := newBroadcast()
-	s := &Server{stream: b}
+// New creates a Server that listens on addr and streams clips from the pool.
+func New(addr string, clips *pool.Pool) *Server {
+	s := &Server{clips: clips}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -47,13 +47,13 @@ func New(addr string) *Server {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(np) //nolint:errcheck
 	})
-	mux.HandleFunc("/listen", s.handleListen)
+	mux.HandleFunc("/response", s.handleResponse)
 
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	return s
 }
 
-// UpdateNowPlaying records the clip currently being mixed into the stream.
+// UpdateNowPlaying records the clip currently being streamed.
 // Safe to call from any goroutine.
 func (s *Server) UpdateNowPlaying(identifier, title string, year int) {
 	s.mu.Lock()
@@ -66,15 +66,9 @@ func (s *Server) UpdateNowPlaying(identifier, title string, year int) {
 	s.mu.Unlock()
 }
 
-// Write sends audio bytes to all currently connected listeners.
-// It satisfies io.Writer so it can be passed directly to the Mixer.
-func (s *Server) Write(p []byte) (int, error) {
-	return s.stream.Write(p)
-}
-
 // Run starts the HTTP server. It blocks until ctx is cancelled.
 func (s *Server) Run(ctx context.Context) error {
-	ln, err := net.Listen("tcp", s.addr())
+	ln, err := net.Listen("tcp", s.srv.Addr)
 	if err != nil {
 		return err
 	}
@@ -88,31 +82,31 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) addr() string { return s.srv.Addr }
-
-// handleListen registers the client, streams audio until the connection drops.
-func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
+// handleResponse streams pre-encoded clips from the pool until the client
+// disconnects (button released). Each non-silence clip updates nowPlaying
+// so the HTMX metadata poll can surface it.
+func (s *Server) handleResponse(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "audio/mpeg")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
-	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
 	flusher, canFlush := w.(http.Flusher)
-
-	id, ch := s.stream.Register()
-	defer s.stream.Deregister(id)
+	ch := s.clips.C()
 
 	for {
 		select {
-		case chunk, ok := <-ch:
+		case clip, ok := <-ch:
 			if !ok {
 				return
 			}
-			if _, err := w.Write(chunk); err != nil {
+			if _, err := w.Write(clip.Data); err != nil {
 				return
 			}
 			if canFlush {
 				flusher.Flush()
+			}
+			if !clip.Silence {
+				s.UpdateNowPlaying(clip.Identifier, clip.Title, clip.Year)
 			}
 		case <-r.Context().Done():
 			return

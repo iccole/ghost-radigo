@@ -10,8 +10,7 @@ type NowPlaying struct {
 	ArchiveURL string
 }
 
-// Page renders the full application shell. HTMX polls /fragment/now to
-// refresh the metadata panel without a full page reload.
+// Page renders the full application shell.
 templ Page() {
 	<!DOCTYPE html>
 	<html lang="en">
@@ -37,39 +36,26 @@ templ Page() {
 				}
 
 				#grain {
-					position: fixed;
-					inset: 0;
-					pointer-events: none;
-					opacity: 0;
-					transition: opacity 2s ease;
-					z-index: 10;
-					mix-blend-mode: screen;
+					position: fixed; inset: 0; pointer-events: none;
+					opacity: 0; transition: opacity 2s ease;
+					z-index: 10; mix-blend-mode: screen;
 				}
 				#grain.active { opacity: 1; }
 
 				.vignette {
-					position: fixed;
-					inset: 0;
-					pointer-events: none;
+					position: fixed; inset: 0; pointer-events: none;
 					background: radial-gradient(ellipse at center, transparent 35%, rgba(2,4,8,0.9) 100%);
 					z-index: 0;
 				}
 
 				.station {
-					position: relative;
-					z-index: 1;
-					text-align: center;
-					display: flex;
-					flex-direction: column;
-					align-items: center;
-					gap: 2rem;
+					position: relative; z-index: 1; text-align: center;
+					display: flex; flex-direction: column; align-items: center; gap: 2rem;
 				}
 
 				.title {
-					font-size: clamp(2.4rem, 8vw, 5rem);
-					font-weight: 700;
-					letter-spacing: 0.45em;
-					color: #b8d4ee;
+					font-size: clamp(2.4rem, 8vw, 5rem); font-weight: 700;
+					letter-spacing: 0.45em; color: #b8d4ee;
 					text-shadow: 0 0 30px rgba(120,170,220,0.35), 0 0 80px rgba(80,130,190,0.12);
 				}
 				.title.receiving { animation: signal-flicker 9s ease-in-out infinite; }
@@ -83,20 +69,15 @@ templ Page() {
 
 				.subtitle {
 					font-size: clamp(0.52rem, 1.6vw, 0.72rem);
-					letter-spacing: 0.5em;
-					color: #1e3048;
-					margin-top: -1.6rem;
+					letter-spacing: 0.5em; color: #1e3048; margin-top: -1.6rem;
 				}
 
 				.divider { width: 100%; border: none; border-top: 1px solid #0c1620; }
 
 				#year-display {
-					font-size: clamp(3rem, 10vw, 6rem);
-					font-weight: 700;
-					letter-spacing: 0.08em;
-					color: #4a70a0;
-					min-width: 8ch;
-					text-align: center;
+					font-size: clamp(3rem, 10vw, 6rem); font-weight: 700;
+					letter-spacing: 0.08em; color: #4a70a0;
+					min-width: 8ch; text-align: center;
 				}
 				#year-display.locked {
 					color: #8ab4d8;
@@ -104,48 +85,61 @@ templ Page() {
 					transition: color 0.4s, text-shadow 0.4s;
 				}
 
-				/* Metadata panel — populated by HTMX */
+				/* Idle state — question input */
+				#ask-form {
+					display: flex; flex-direction: column; align-items: center; gap: 1.2rem;
+				}
+				#question-input {
+					background: none; border: none; border-bottom: 1px solid #1a2a3a;
+					color: #7a9ab8; font-family: inherit; font-size: 0.82rem;
+					letter-spacing: 0.25em; text-align: center;
+					width: 26ch; padding: 0.4rem 0; outline: none;
+					caret-color: #5a80a8; user-select: text;
+				}
+				#question-input::placeholder { color: #1e3048; letter-spacing: 0.35em; }
+				#question-input:focus { border-bottom-color: #3a5878; }
+				#ask-btn {
+					background: none; border: 1px solid #122030; color: #3a5878;
+					font-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em;
+					padding: 0.7rem 2.5rem; cursor: pointer;
+					transition: border-color 0.3s, color 0.3s, box-shadow 0.3s;
+				}
+				#ask-btn:hover { border-color: #5a80a8; color: #b8d4ee; box-shadow: 0 0 24px rgba(80,130,190,0.12); }
+				#ask-btn:active { transform: scale(0.97); }
+
+				/* Post-question state */
+				#receive-ui {
+					display: none; flex-direction: column; align-items: center; gap: 1.8rem;
+				}
+				#receive-ui.visible { display: flex; }
+
+				.question-display {
+					font-size: clamp(0.62rem, 1.8vw, 0.78rem); letter-spacing: 0.3em;
+					color: #3a5878; max-width: 36ch; text-align: center; line-height: 1.8;
+				}
+
 				#meta {
-					min-height: 2.8rem;
-					display: flex;
-					flex-direction: column;
-					align-items: center;
-					gap: 0.35rem;
-					opacity: 0;
-					transition: opacity 0.8s ease;
+					min-height: 2.8rem; display: flex; flex-direction: column;
+					align-items: center; gap: 0.35rem;
+					opacity: 0; transition: opacity 0.8s ease;
 				}
 				#meta.visible { opacity: 1; }
 				.meta-title {
-					font-size: clamp(0.6rem, 1.8vw, 0.78rem);
-					letter-spacing: 0.2em;
-					color: #5a80a0;
-					max-width: 36ch;
-					overflow: hidden;
-					text-overflow: ellipsis;
-					white-space: nowrap;
+					font-size: clamp(0.6rem, 1.8vw, 0.78rem); letter-spacing: 0.2em;
+					color: #5a80a0; max-width: 36ch; overflow: hidden;
+					text-overflow: ellipsis; white-space: nowrap;
 				}
 				.meta-link {
-					font-size: clamp(0.5rem, 1.4vw, 0.62rem);
-					letter-spacing: 0.25em;
-					color: #1e3048;
-					text-decoration: none;
-					transition: color 0.2s;
+					font-size: clamp(0.5rem, 1.4vw, 0.62rem); letter-spacing: 0.25em;
+					color: #1e3048; text-decoration: none; transition: color 0.2s;
 				}
 				.meta-link:hover { color: #5a80a0; }
 
-				.controls {
-					display: flex;
-					flex-direction: column;
-					align-items: center;
-					gap: 1.2rem;
-				}
+				.controls { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }
 
 				#status {
-					font-size: 0.68rem;
-					letter-spacing: 0.5em;
-					color: #1e3048;
-					height: 1.2em;
-					transition: color 0.4s;
+					font-size: 0.68rem; letter-spacing: 0.5em; color: #1e3048;
+					height: 1.2em; transition: color 0.4s;
 				}
 				#status.receiving { color: #5a80a8; }
 				#status .dot { display: inline-block; }
@@ -155,23 +149,25 @@ templ Page() {
 					50%       { opacity: 1; }
 				}
 
-				#tune-btn {
-					background: none;
-					border: 1px solid #122030;
-					color: #3a5878;
-					font-family: inherit;
-					font-size: 0.72rem;
-					letter-spacing: 0.5em;
-					padding: 0.7rem 2.5rem;
-					cursor: pointer;
+				#hold-btn {
+					background: none; border: 1px solid #122030; color: #3a5878;
+					font-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em;
+					padding: 0.9rem 3rem; cursor: pointer;
 					transition: border-color 0.3s, color 0.3s, box-shadow 0.3s;
+					touch-action: none; -webkit-user-select: none; user-select: none;
 				}
-				#tune-btn:hover {
-					border-color: #5a80a8;
-					color: #b8d4ee;
-					box-shadow: 0 0 24px rgba(80,130,190,0.12);
+				#hold-btn:hover { border-color: #3a5878; color: #7a9ab8; }
+				#hold-btn.holding {
+					border-color: #8ab4d8; color: #c8e4f8;
+					box-shadow: 0 0 40px rgba(80,130,190,0.25), 0 0 80px rgba(60,110,170,0.1);
 				}
-				#tune-btn:active { transform: scale(0.97); }
+
+				.reset-link {
+					background: none; border: none; color: #1e3048; font-family: inherit;
+					font-size: 0.55rem; letter-spacing: 0.4em; cursor: pointer;
+					padding: 0.2rem; transition: color 0.3s;
+				}
+				.reset-link:hover { color: #4a70a0; }
 			</style>
 		</head>
 		<body>
@@ -184,15 +180,23 @@ templ Page() {
 				</div>
 				<hr class="divider"/>
 				<div id="year-display">——</div>
-				<div
-					id="meta"
-					hx-get="/fragment/now"
-					hx-trigger="every 4s"
-					hx-swap="innerHTML"
-				></div>
-				<div class="controls">
-					<div id="status"><span class="dot">◌</span>&nbsp;IDLE</div>
-					<button id="tune-btn">TUNE IN</button>
+				<div id="ask-form">
+					<input id="question-input" type="text" placeholder="ASK A QUESTION" autocomplete="off" spellcheck="false"/>
+					<button id="ask-btn">TRANSMIT</button>
+				</div>
+				<div id="receive-ui">
+					<div id="question-text" class="question-display"></div>
+					<div
+						id="meta"
+						hx-get="/fragment/now"
+						hx-trigger="every 4s"
+						hx-swap="innerHTML"
+					></div>
+					<div class="controls">
+						<div id="status"><span class="dot">◌</span>&nbsp;READY</div>
+						<button id="hold-btn">HOLD TO RECEIVE</button>
+						<button id="reset-btn" class="reset-link">← NEW QUESTION</button>
+					</div>
 				</div>
 			</div>
 			<audio id="audio" preload="none"></audio>
@@ -202,7 +206,7 @@ templ Page() {
 
 					// ── TV static ─────────────────────────────────────────────────────────────
 					const canvas = document.getElementById('grain');
-					const ctx    = canvas.getContext('2d');
+					const gctx   = canvas.getContext('2d');
 					let grainTimer = null;
 
 					function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
@@ -211,7 +215,7 @@ templ Page() {
 
 					function drawStatic() {
 						const w = canvas.width, h = canvas.height;
-						const img = ctx.createImageData(w, h);
+						const img = gctx.createImageData(w, h);
 						const d = img.data;
 						for (let i = 0; i < d.length; i += 4) {
 							if (Math.random() < 0.055) {
@@ -220,7 +224,7 @@ templ Page() {
 								d[i+3] = 25 + (Math.random() * 40 | 0);
 							}
 						}
-						ctx.putImageData(img, 0, 0);
+						gctx.putImageData(img, 0, 0);
 						grainTimer = setTimeout(() => requestAnimationFrame(drawStatic), 80);
 					}
 
@@ -228,7 +232,7 @@ templ Page() {
 					function stopGrain()  {
 						canvas.classList.remove('active');
 						clearTimeout(grainTimer); grainTimer = null;
-						ctx.clearRect(0, 0, canvas.width, canvas.height);
+						gctx.clearRect(0, 0, canvas.width, canvas.height);
 					}
 
 					// ── Year display — erratic jumps ──────────────────────────────────────────
@@ -246,12 +250,18 @@ templ Page() {
 						yearTimer = setTimeout(jumpYear, 120 + Math.random() * 480);
 					}
 
-					function startYear() { jumpYear(); }
-					function stopYear()  {
+					function startYear() { if (!yearTimer) jumpYear(); }
+
+					function pauseYear() {
 						clearTimeout(yearTimer); yearTimer = null;
-						clearTimeout(lockTimer);  lockTimer = null;
+						clearTimeout(lockTimer); lockTimer = null;
 						lockedYear = null;
 						yearEl.classList.remove('locked');
+						// leave yearEl.textContent showing last year
+					}
+
+					function resetYear() {
+						pauseYear();
 						yearEl.textContent = '——';
 					}
 
@@ -266,14 +276,14 @@ templ Page() {
 						}, 5000);
 					}
 
-					// ── HTMX metadata swap handler ────────────────────────────────────────────
-					const metaEl = document.getElementById('meta');
-					let playing  = false;
+					// ── HTMX metadata swap ────────────────────────────────────────────────────
+					const metaEl  = document.getElementById('meta');
+					let receiving = false;
 
 					document.body.addEventListener('htmx:afterSwap', function (e) {
 						if (e.detail.target.id !== 'meta') return;
 						const inner = metaEl.querySelector('[data-year]');
-						if (playing && inner) {
+						if (receiving && inner) {
 							metaEl.classList.add('visible');
 							const y = parseInt(inner.dataset.year, 10);
 							if (y) lockYear(y);
@@ -282,48 +292,81 @@ templ Page() {
 						}
 					});
 
-					// ── Audio & UI ────────────────────────────────────────────────────────────
-					const audio  = document.getElementById('audio');
-					const btn    = document.getElementById('tune-btn');
-					const status = document.getElementById('status');
-					const title  = document.getElementById('title');
+					// ── Elements ──────────────────────────────────────────────────────────────
+					const askForm       = document.getElementById('ask-form');
+					const questionInput = document.getElementById('question-input');
+					const askBtn        = document.getElementById('ask-btn');
+					const receiveUI     = document.getElementById('receive-ui');
+					const questionText  = document.getElementById('question-text');
+					const status        = document.getElementById('status');
+					const holdBtn       = document.getElementById('hold-btn');
+					const resetBtn      = document.getElementById('reset-btn');
+					const titleEl       = document.getElementById('title');
+					const audio         = document.getElementById('audio');
 
-					function setReceiving(on) {
-						if (on) {
-							status.className = 'receiving';
-							status.innerHTML = '<span class="dot">◌</span>&nbsp;RECEIVING';
-							btn.textContent  = 'TUNE OUT';
-							title.classList.add('receiving');
-						} else {
-							status.className = '';
-							status.innerHTML = '<span class="dot">◌</span>&nbsp;IDLE';
-							btn.textContent  = 'TUNE IN';
-							title.classList.remove('receiving');
-						}
+					// ── Question submit ───────────────────────────────────────────────────────
+					function submitQuestion() {
+						const q = questionInput.value.trim().toUpperCase();
+						if (!q) return;
+						questionText.textContent = '> ' + q;
+						askForm.style.display = 'none';
+						receiveUI.classList.add('visible');
 					}
 
-					function tuneIn() {
-						playing = true;
-						setReceiving(true);
+					askBtn.addEventListener('click', submitQuestion);
+					questionInput.addEventListener('keydown', function (e) {
+						if (e.key === 'Enter') submitQuestion();
+					});
+
+					// ── Hold to receive ───────────────────────────────────────────────────────
+					function startReceiving() {
+						if (receiving) return;
+						receiving = true;
+						holdBtn.classList.add('holding');
+						titleEl.classList.add('receiving');
+						status.className = 'receiving';
+						status.innerHTML = '<span class="dot">◌</span>&nbsp;RECEIVING';
 						startGrain();
 						startYear();
-						audio.src = '/listen';
-						audio.play().catch(() => {});
+						audio.src = '/response';
+						audio.play().catch(function () {});
 					}
 
-					function tuneOut() {
-						playing = false;
-						setReceiving(false);
+					function stopReceiving() {
+						if (!receiving) return;
+						receiving = false;
+						holdBtn.classList.remove('holding');
+						titleEl.classList.remove('receiving');
+						status.className = '';
+						status.innerHTML = '<span class="dot">◌</span>&nbsp;READY';
 						stopGrain();
-						stopYear();
 						metaEl.classList.remove('visible');
 						audio.pause();
 						audio.src = '';
+						pauseYear();
 					}
 
-					btn.addEventListener('click', () => { if (playing) tuneOut(); else tuneIn(); });
-					audio.addEventListener('ended', tuneOut);
-					audio.addEventListener('error', tuneOut);
+					holdBtn.addEventListener('mousedown', startReceiving);
+					holdBtn.addEventListener('touchstart', function (e) {
+						e.preventDefault();
+						startReceiving();
+					}, { passive: false });
+					holdBtn.addEventListener('mouseup', stopReceiving);
+					holdBtn.addEventListener('touchend', stopReceiving);
+					holdBtn.addEventListener('mouseleave', stopReceiving);
+
+					audio.addEventListener('ended', stopReceiving);
+					audio.addEventListener('error', stopReceiving);
+
+					// ── Reset ─────────────────────────────────────────────────────────────────
+					resetBtn.addEventListener('click', function () {
+						stopReceiving();
+						receiveUI.classList.remove('visible');
+						askForm.style.display = '';
+						questionInput.value = '';
+						resetYear();
+						metaEl.classList.remove('visible');
+					});
 				})();
 			</script>
 		</body>

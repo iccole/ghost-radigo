@@ -9,10 +9,10 @@ import (
 )
 
 const (
-	bufferSize   = 32   // max MediaItems held locally
-	minClip      = 0.4  // seconds — short enough to capture individual phonemes
-	maxClip      = 5.0  // seconds
-	silenceProb  = 0.40 // 40% chance of emitting a noise gap between clips
+	bufferSize  = 32   // max MediaItems held locally
+	minClip     = 3.0  // seconds — pool splits into 150ms sweep chunks
+	maxClip     = 8.0  // seconds — more audio per ffmpeg invocation
+	silenceProb = 0.30 // 30% chance of emitting a noise gap between clips
 
 	// Drift parameters.
 	normalDriftMax  = 3.0  // max year change per clip under normal drift

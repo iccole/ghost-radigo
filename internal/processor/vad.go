@@ -23,7 +23,7 @@ const (
 	vadSilenceFloor = -70.0
 
 	// vadProbeSecs caps how much audio we download for the analysis pass.
-	vadProbeSecs = 3.0
+	vadProbeSecs = 1.0
 
 	vadProbeTimeout = 30 * time.Second
 )
