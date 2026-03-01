@@ -42,6 +42,7 @@ func main() {
 	pool := processor.NewPool(processorCount, jobC, clipC)
 	srv := server.New(addr)
 	mix := mixer.New(clipC, srv)
+	mix.OnClip = srv.UpdateNowPlaying
 
 	// Run all stages concurrently.
 	go func() {

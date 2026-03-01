@@ -19,8 +19,9 @@ const (
 
 // Mixer consumes processed clips and writes a continuous audio byte stream.
 type Mixer struct {
-	in  <-chan processor.ProcessedClip
-	out io.Writer
+	in     <-chan processor.ProcessedClip
+	out    io.Writer
+	OnClip func(identifier, title string, year int) // called on each non-silence clip
 }
 
 // New creates a Mixer that reads from in and writes the stream to out.
@@ -60,6 +61,9 @@ func (m *Mixer) Run(ctx context.Context) error {
 				_ = err
 			}
 			audioWritten += time.Duration(float64(time.Second) * clip.Duration)
+			if !clip.Silence && m.OnClip != nil {
+				m.OnClip(clip.Identifier, clip.Title, clip.Year)
+			}
 
 		case <-time.After(clipWait):
 			// No clip ready yet. Loop back; pacing will handle timing.

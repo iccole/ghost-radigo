@@ -29,9 +29,12 @@ const (
 
 // ProcessedClip holds the encoded audio bytes for a single clip.
 type ProcessedClip struct {
-	Data     []byte
-	Duration float64 // seconds (may be 0 for silence if generation failed)
-	Silence  bool
+	Data       []byte
+	Duration   float64 // seconds (may be 0 for silence if generation failed)
+	Silence    bool
+	Identifier string // archive item ID; empty for noise gaps
+	Title      string
+	Year       int
 }
 
 // Worker pulls ClipJobs from in, runs ffmpeg, and pushes ProcessedClips to out.
@@ -145,8 +148,11 @@ func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (Processe
 	}
 
 	return ProcessedClip{
-		Data:     stdout.Bytes(),
-		Duration: job.Duration,
+		Data:       stdout.Bytes(),
+		Duration:   job.Duration,
+		Identifier: job.Item.Identifier,
+		Title:      job.Item.Title,
+		Year:       job.Item.Year,
 	}, nil
 }
 

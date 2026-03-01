@@ -3,18 +3,31 @@ package server
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
+	"sync"
 )
 
 //go:embed static/index.html
 var indexHTML []byte
 
+// NowPlaying holds metadata for the clip currently being streamed.
+type NowPlaying struct {
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	Year       int    `json:"year"`
+	ArchiveURL string `json:"archive_url"`
+}
+
 // Server exposes the /listen HTTP endpoint, broadcasting the audio stream
 // to all connected clients.
 type Server struct {
-	stream *Broadcast
-	srv    *http.Server
+	stream     *Broadcast
+	srv        *http.Server
+	mu         sync.RWMutex
+	nowPlaying NowPlaying
 }
 
 // New creates a Server that listens on addr.
@@ -32,9 +45,23 @@ func New(addr string) *Server {
 		w.Write(indexHTML) //nolint:errcheck
 	})
 	mux.HandleFunc("/listen", s.handleListen)
+	mux.HandleFunc("/now", s.handleNow)
 
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	return s
+}
+
+// UpdateNowPlaying records the clip currently being mixed into the stream.
+// Safe to call from any goroutine.
+func (s *Server) UpdateNowPlaying(identifier, title string, year int) {
+	s.mu.Lock()
+	s.nowPlaying = NowPlaying{
+		Identifier: identifier,
+		Title:      title,
+		Year:       year,
+		ArchiveURL: fmt.Sprintf("https://archive.org/details/%s", identifier),
+	}
+	s.mu.Unlock()
 }
 
 // Write sends audio bytes to all currently connected listeners.
@@ -60,6 +87,16 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) addr() string { return s.srv.Addr }
+
+// handleNow returns the currently playing clip as JSON.
+func (s *Server) handleNow(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	np := s.nowPlaying
+	s.mu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(np) //nolint:errcheck
+}
 
 // handleListen registers the client, streams audio until the connection drops.
 func (s *Server) handleListen(w http.ResponseWriter, r *http.Request) {
