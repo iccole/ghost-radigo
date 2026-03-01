@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GHOST RADIO</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d0a07;
+    color: #c8811a;
+    font-family: 'Courier New', Courier, monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #grain {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 1.2s ease;
+    z-index: 10;
+  }
+
+  #grain.active { opacity: 1; }
+
+  .station {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2rem;
+  }
+
+  .title {
+    font-size: clamp(2.5rem, 8vw, 5rem);
+    font-weight: 700;
+    letter-spacing: 0.35em;
+    text-shadow: 0 0 30px rgba(200, 129, 26, 0.5);
+  }
+
+  .subtitle {
+    font-size: clamp(0.6rem, 2vw, 0.85rem);
+    letter-spacing: 0.4em;
+    color: #7a4e10;
+    margin-top: -1.5rem;
+  }
+
+  .dial-band {
+    font-size: clamp(0.65rem, 1.8vw, 0.8rem);
+    letter-spacing: 0.3em;
+    color: #5c3b0c;
+    border-top: 1px solid #2a1e0e;
+    border-bottom: 1px solid #2a1e0e;
+    padding: 0.4rem 2rem;
+    width: 100%;
+    text-align: center;
+  }
+
+  #year-display {
+    font-size: clamp(3rem, 10vw, 6rem);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #e09020;
+    text-shadow: 0 0 40px rgba(224, 144, 32, 0.4);
+    min-width: 8ch;
+    text-align: center;
+    transition: color 0.5s;
+  }
+
+  .controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  #status {
+    font-size: 0.75rem;
+    letter-spacing: 0.4em;
+    color: #5c3b0c;
+    height: 1.2em;
+  }
+
+  #status.on-air {
+    color: #c8811a;
+  }
+
+  #status .dot {
+    display: inline-block;
+  }
+
+  #status.on-air .dot {
+    animation: blink 1.2s step-start infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+  }
+
+  #tune-btn {
+    background: none;
+    border: 1px solid #c8811a;
+    color: #c8811a;
+    font-family: inherit;
+    font-size: 0.8rem;
+    letter-spacing: 0.4em;
+    padding: 0.7rem 2.5rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  }
+
+  #tune-btn:hover {
+    background: #c8811a;
+    color: #0d0a07;
+    box-shadow: 0 0 20px rgba(200, 129, 26, 0.4);
+  }
+
+  #tune-btn:active {
+    transform: scale(0.97);
+  }
+
+  .vignette {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.7) 100%);
+    z-index: 0;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="grain"></canvas>
+<div class="vignette"></div>
+
+<div class="station">
+  <div>
+    <div class="title">GHOST RADIO</div>
+    <div class="subtitle">ARCHIVE.ORG / 1900–1980</div>
+  </div>
+
+  <div class="dial-band">AM · SW · FM · OPEN BAND</div>
+
+  <div id="year-display">——</div>
+
+  <div class="controls">
+    <div id="status"><span class="dot">●</span>&nbsp;IDLE</div>
+    <button id="tune-btn">TUNE IN</button>
+  </div>
+</div>
+
+<audio id="audio" preload="none"></audio>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Film grain ──────────────────────────────────────────────────────────────
+  const canvas = document.getElementById('grain');
+  const ctx    = canvas.getContext('2d');
+  let grainRaf = null;
+
+  function resizeCanvas() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  function drawGrain() {
+    const w = canvas.width, h = canvas.height;
+    const img = ctx.createImageData(w, h);
+    const d   = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.random() * 255 | 0;
+      d[i] = d[i+1] = d[i+2] = v;
+      d[i+3] = 18; // very low opacity per pixel
+    }
+    ctx.putImageData(img, 0, 0);
+    grainRaf = setTimeout(() => requestAnimationFrame(drawGrain), 80); // ~12 fps
+  }
+
+  function startGrain() {
+    canvas.classList.add('active');
+    drawGrain();
+  }
+
+  function stopGrain() {
+    canvas.classList.remove('active');
+    clearTimeout(grainRaf);
+    grainRaf = null;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // ── Year drift ──────────────────────────────────────────────────────────────
+  let yearFloat = 1920 + Math.random() * 40;
+  let yearDrift = (Math.random() - 0.5) * 0.4;
+  let yearRaf   = null;
+
+  function tickYear() {
+    yearFloat += yearDrift;
+    // Soft boundary bounce
+    if (yearFloat < 1900) { yearFloat = 1900; yearDrift =  Math.abs(yearDrift); }
+    if (yearFloat > 1980) { yearFloat = 1980; yearDrift = -Math.abs(yearDrift); }
+    // Occasional random nudge
+    if (Math.random() < 0.008) yearDrift += (Math.random() - 0.5) * 0.3;
+    yearDrift = Math.max(-1.2, Math.min(1.2, yearDrift));
+
+    document.getElementById('year-display').textContent = Math.round(yearFloat);
+    yearRaf = setTimeout(tickYear, 120);
+  }
+
+  function startYear() { tickYear(); }
+
+  function stopYear() {
+    clearTimeout(yearRaf);
+    yearRaf = null;
+    document.getElementById('year-display').textContent = '——';
+  }
+
+  // ── Audio & UI state ────────────────────────────────────────────────────────
+  const audio   = document.getElementById('audio');
+  const btn     = document.getElementById('tune-btn');
+  const status  = document.getElementById('status');
+  let playing   = false;
+
+  function setOnAir(on) {
+    if (on) {
+      status.className = 'on-air';
+      status.innerHTML = '<span class="dot">●</span>&nbsp;ON AIR';
+      btn.textContent  = 'TUNE OUT';
+    } else {
+      status.className = '';
+      status.innerHTML = '<span class="dot">●</span>&nbsp;IDLE';
+      btn.textContent  = 'TUNE IN';
+    }
+  }
+
+  function tuneIn() {
+    playing = true;
+    setOnAir(true);
+    startGrain();
+    startYear();
+    audio.src = '/listen';
+    audio.play().catch(() => {/* autoplay policy — user gesture already fired */});
+  }
+
+  function tuneOut() {
+    playing = false;
+    setOnAir(false);
+    stopGrain();
+    stopYear();
+    audio.pause();
+    audio.src = ''; // release the HTTP connection
+  }
+
+  btn.addEventListener('click', function () {
+    if (playing) tuneOut(); else tuneIn();
+  });
+
+  // If the stream ends unexpectedly, reset UI
+  audio.addEventListener('ended', tuneOut);
+  audio.addEventListener('error', tuneOut);
+})();
+</script>
+</body>
+</html>

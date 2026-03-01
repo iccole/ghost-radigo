@@ -2,9 +2,13 @@ package server
 
 import (
 	"context"
+	_ "embed"
 	"net"
 	"net/http"
 )
+
+//go:embed static/index.html
+var indexHTML []byte
 
 // Server exposes the /listen HTTP endpoint, broadcasting the audio stream
 // to all connected clients.
@@ -19,6 +23,14 @@ func New(addr string) *Server {
 	s := &Server{stream: b}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML) //nolint:errcheck
+	})
 	mux.HandleFunc("/listen", s.handleListen)
 
 	s.srv = &http.Server{Addr: addr, Handler: mux}
