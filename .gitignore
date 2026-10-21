@@ -1,0 +1,27 @@
+# Binaries
+/station
+*.exe
+*.test
+*.out
+
+# Go tooling
+/vendor/
+coverage.*
+*.prof
+
+# Local clip cache (if GHOST_RADIO_CACHE_DIR points inside the repo)
+/cache/
+*.mp3.tmp
+
+# Environment
+.env
+.env.*
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Claude Code local settings
+.claude/settings.local.json
