@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/isaiah/ghost-radigo/internal/cache"
 	"github.com/isaiah/ghost-radigo/internal/fetcher"
 	"github.com/isaiah/ghost-radigo/internal/logger"
 	"github.com/isaiah/ghost-radigo/internal/pool"
@@ -36,10 +37,19 @@ func main() {
 		s = time.Now().UnixNano()
 	}
 
+	// Set up disk cache.
+	clipCache, err := cache.New(cache.DefaultDir())
+	if err != nil {
+		logger.Error("cache unavailable: %v — running without disk cache", err)
+		clipCache = nil
+	} else {
+		logger.Info("clip cache: %s", cache.DefaultDir())
+	}
+
 	// Assemble pipeline.
 	fetch    := fetcher.New(mediaC)
 	scan     := scanner.New(mediaC, jobC, s)
-	procPool := processor.NewPool(processorCount, jobC, clipC)
+	procPool := processor.NewPool(processorCount, jobC, clipC, clipCache)
 	clipPool := pool.New(clipC)
 	srv      := server.New(addr, clipPool)
 

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/isaiah/ghost-radigo/internal/cache"
 	"github.com/isaiah/ghost-radigo/internal/logger"
 	"github.com/isaiah/ghost-radigo/internal/scanner"
 )
@@ -46,19 +47,21 @@ type ProcessedClip struct {
 
 // Worker pulls ClipJobs from in, runs ffmpeg, and pushes ProcessedClips to out.
 type Worker struct {
-	id  int
-	in  <-chan scanner.ClipJob
-	out chan<- ProcessedClip
-	rng *rand.Rand
+	id    int
+	in    <-chan scanner.ClipJob
+	out   chan<- ProcessedClip
+	rng   *rand.Rand
+	cache *cache.Cache // nil disables caching
 }
 
 // NewWorker creates a processor worker.
-func NewWorker(id int, in <-chan scanner.ClipJob, out chan<- ProcessedClip) *Worker {
+func NewWorker(id int, in <-chan scanner.ClipJob, out chan<- ProcessedClip, c *cache.Cache) *Worker {
 	return &Worker{
-		id:  id,
-		in:  in,
-		out: out,
-		rng: rand.New(rand.NewSource(time.Now().UnixNano() + int64(id)*1000)),
+		id:    id,
+		in:    in,
+		out:   out,
+		rng:   rand.New(rand.NewSource(time.Now().UnixNano() + int64(id)*1000)),
+		cache: c,
 	}
 }
 
@@ -108,6 +111,18 @@ func (w *Worker) process(ctx context.Context, job scanner.ClipJob) (ProcessedCli
 //
 // A random 15% of clips are time-reversed (areverse) for an EVP-style effect.
 func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (ProcessedClip, error) {
+	// Cache hit — skip VAD probe and ffmpeg encode entirely.
+	if data, ok := w.cache.Get(job.Item.Identifier, job.Offset, job.Duration); ok {
+		logger.Debug("cache hit  %s  offset=%.1fs", job.Item.Identifier, job.Offset)
+		return ProcessedClip{
+			Data:       data,
+			Duration:   job.Duration,
+			Identifier: job.Item.Identifier,
+			Title:      job.Item.Title,
+			Year:       job.Item.Year,
+		}, nil
+	}
+
 	// VAD probe — analysis-only pass, no encoding.
 	score, err := vadScore(ctx, job.Item.FileURL, job.Offset, job.Duration)
 	if err != nil {
@@ -177,8 +192,12 @@ func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (Processe
 		return ProcessedClip{}, fmt.Errorf("ffmpeg produced no output")
 	}
 
+	data := stdout.Bytes()
+	if err := w.cache.Put(job.Item.Identifier, job.Offset, job.Duration, data); err != nil {
+		logger.Warn("cache put %s: %v", job.Item.Identifier, err)
+	}
 	return ProcessedClip{
-		Data:       stdout.Bytes(),
+		Data:       data,
 		Duration:   job.Duration,
 		Identifier: job.Item.Identifier,
 		Title:      job.Item.Title,
@@ -235,11 +254,11 @@ type Pool struct {
 	workers []*Worker
 }
 
-// NewPool creates n workers sharing the same input and output channels.
-func NewPool(n int, in <-chan scanner.ClipJob, out chan<- ProcessedClip) *Pool {
+// NewPool creates n workers sharing the same input, output, and cache.
+func NewPool(n int, in <-chan scanner.ClipJob, out chan<- ProcessedClip, c *cache.Cache) *Pool {
 	workers := make([]*Worker, n)
 	for i := range workers {
-		workers[i] = NewWorker(i, in, out)
+		workers[i] = NewWorker(i, in, out, c)
 	}
 	return &Pool{workers: workers}
 }
