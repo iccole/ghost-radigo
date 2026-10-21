@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Ghost Radio** is a Go backend service that generates a continuous, audio-only HTTP stream assembled in real time from public-domain content sourced from the Internet Archive. It behaves like a "radio scanner" — drifting across archival recordings without user control, playlists, or personalization.
+**Ghost Radio** is a Go service that acts like a "spirit box" over the Internet Archive. A listener asks a question in the web UI; the station sweeps across public-domain recordings (old-time radio, LibriVox, spoken-word collections, Flash cartoon audio), extracts sub-second fragments, stitches them into short composites, and plays five of them back as the "answer". There are no playlists, no search, and no user control over what is selected.
 
 ## Commands
 
@@ -12,89 +12,102 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build
 go build ./...
 
-# Run
+# Run (serves on :8080)
 go run ./cmd/station
 
 # Test
 go test ./...
 
-# Test single package
-go test ./internal/scanner/...
-
-# Test with verbose output
-go test -v ./...
-
-# Lint (assumes golangci-lint installed)
+# Vet / lint (golangci-lint assumed installed)
+go vet ./...
 golangci-lint run
 
 # Format
 gofmt -w .
+
+# Regenerate templ output after editing templates.templ
+templ generate
+
+# Docker (image bundles ffmpeg)
+docker compose up --build
 ```
 
-**External dependency:** `ffmpeg` must be installed and available on `$PATH`.
+**External dependency:** `ffmpeg` must be installed and on `$PATH`.
+
+`internal/server/templates/templates_templ.go` is generated but committed, so the project builds without the `templ` CLI. Always regenerate it after editing `templates.templ` — never hand-edit the generated file.
 
 ## Architecture
 
-The pipeline is a linear chain of goroutines connected by channels:
+A linear chain of long-running goroutines connected by buffered channels (backpressure is implicit):
 
 ```
-Fetcher → Scanner → Processor workers → Mixer → HTTP Stream
+Fetcher → Scanner → Processor pool → Session manager → HTTP (SSE + clip bytes)
 ```
 
-Each stage is a long-running goroutine. Channels provide natural backpressure between stages.
+Every stage exposes `Run(ctx context.Context) error` and is started from `cmd/station/main.go`, which owns the channels and shuts everything down via `signal.NotifyContext`.
 
-### Stage responsibilities
+### Stages
 
 **Fetcher** (`internal/fetcher/`)
-- Periodically queries the Internet Archive metadata API.
-- Retrieves candidate items with audio or video files (video treated as audio containers).
-- Caches lightweight metadata only (no full file downloads until clip extraction time).
-- Pushes `MediaItem` structs (streamable URL + metadata) into a channel consumed by the Scanner.
+- Rotates through `searchQueries` against the IA advanced search API, favouring speech-heavy collections (`oldtimeradio`, `librivox`, `opensource_audio`, …) plus Flash animation collections as `mediatype:movies`.
+- `collection:radio` and music-heavy collections are intentionally excluded (long modern files cause ffmpeg seek timeouts; speech fits the concept better).
+- Filters out `access-restricted` items; resolves `/metadata/{id}` to pick the best file (MP3/Ogg preferred, video containers as fallback).
+- Emits `MediaItem` (file URL, title, year, duration). Backs off on errors and rate limits.
 
-**Scanner** (`internal/scanner/`)
-- The "station dial" — the core stateful component.
-- Maintains `current_year float64`, a session seed, and drift parameters.
-- Performs a random walk across time and collections rather than pure random selection.
-- Selects short segments (3–20 seconds) from chosen media.
-- Emits `ClipJob` structs (URL, time offset, duration) into the processor input channel.
-- Behavior: prefer gradual temporal drift, avoid abrupt jumps, allow occasional silence.
+**Scanner** (`internal/scanner/`) — the "dial"
+- Holds `currentYear` (1900–1980) doing a random walk: small drifts (≤3 yrs) with occasional large jumps (≤15 yrs, 10%).
+- Picks items weighted by proximity to `currentYear` (unknown year = low but nonzero weight).
+- Emits `ClipJob`s of 0.1–2.0 s fragments; ~15% are `Silence` jobs (0.3–1.5 s noise gaps). Offsets are capped at 15 min into a file.
+- Seeded `math/rand` — seed comes from `main.go` (0 = time-derived).
 
 **Processor** (`internal/processor/`)
-- Spawns `ffmpeg` subprocesses — Go does not decode audio itself.
-- Each worker receives a `ClipJob`, runs ffmpeg to: seek to offset, trim duration, normalize loudness, apply soft bandpass filter, add fade-in/out (300–800ms), encode to target format (MP3 or raw PCM).
-- Multiple parallel workers allowed.
-- Outputs processed audio byte streams into the Mixer input channel.
+- `Pool` of N workers (`processorCount = 8` in main), each shelling out to `ffmpeg` with a context timeout.
+- Flow per job: cache lookup → VAD probe (`vad.go`: bandpass + `volumedetect`, rejects near-silence; **fails open** on probe errors) → encode.
+- Encode chain: seek, trim, random 0.3–0.8 s fades, `loudnorm`, highpass 80 Hz / lowpass 8 kHz, MP3 128k/44.1k stereo. ~15% of clips are `areverse`d for an EVP effect.
+- Silence jobs become quiet pink noise via ffmpeg `anoisesrc`.
+- Outputs `ProcessedClip` (MP3 bytes + metadata).
 
-**Mixer** (`internal/mixer/`)
-- Single goroutine maintaining a continuous playback buffer.
-- Overlaps clip fades to prevent hard cuts.
-- Optionally inserts silence gaps.
-- Maintains constant bitrate output.
-- Reads from Processor channel, writes to the HTTP stream.
+**Cache** (`internal/cache/`)
+- On-disk MP3 cache keyed by `identifier_{offset bucketed to 5s}_{duration rounded}s.mp3`.
+- Location: `$GHOST_RADIO_CACHE_DIR`, else `os.UserCacheDir()/ghost-radio`.
+- Atomic writes (tmp + rename). Methods are nil-safe — a nil `*Cache` means "no cache".
 
-**Stream Server** (`internal/server/`)
-- `GET /listen` — live audio stream, infinite response body.
-- No seeking, no rewinding.
-- Multiple simultaneous listeners receive the same ongoing stream (broadcast).
-- Standard `net/http`.
+**Session manager** (`internal/session/`)
+- Sole consumer of processor output. Drops silence clips and fans each fragment out to every active session.
+- Each `Session` accumulates fragments into a composite of 7–10 s, then publishes it and signals `Notify`. After `MinClips` (5) composites the SSE handler stops the session.
+- Concurrency rule: accumulation state (`buf`, `bufDur`, `targetDur`, `rng`) is touched only by the `Manager.Run` goroutine — no lock. `composites` is read by HTTP handlers and guarded by `mu`.
 
-### Key design rules
+**Server** (`internal/server/`)
+- Standard `net/http` with Go 1.22 method/pattern routing; UI rendered with templ (`templates/`).
 
-- **Continuity over accuracy** — smooth transitions matter more than content correctness.
-- **Stateless users, stateful station** — the station process holds all state; clients are anonymous.
-- **No user-facing controls** — the `/listen` endpoint is the only endpoint that matters.
-- **ffmpeg does all audio work** — never attempt in-process audio decoding/encoding in Go.
-- **Optional Redis** — only if in-memory buffering proves insufficient; prefer avoiding it.
+| Route | Purpose |
+|---|---|
+| `GET /` | Web UI |
+| `POST /session` | Create session → `{"id"}` |
+| `GET /session/{id}/events` | SSE: `clip` events (`index`, `identifier`, `title`, `year`), then `done` |
+| `GET /clip/{id}/{n}` | MP3 bytes for composite `n` |
+| `DELETE /session/{id}` | Stop and remove session |
 
-## Entry Point
+The front end (inline JS in `templates.templ`) handles the question form, plays composites sequentially via a single `Audio` element, and drives the visual effects (grain, year counter, sweep).
 
-`cmd/station/main.go` — wires all stages together and starts the HTTP server.
+**Logger** (`internal/logger/`) — small leveled logger (`Debug/Info/Warn/Error`); use it instead of `log` directly.
+
+### Legacy
+
+`internal/pool/` (slices clips into ~150 ms chunks for a continuous ghost-box stream) is from the earlier continuous-stream design and is **not currently wired in**. Don't build on it without deciding whether to revive or delete it.
+
+### Design rules
+
+- **ffmpeg does all audio work** — never decode/encode audio in-process in Go. Concatenating already-encoded MP3 byte slices (session composites) is the only byte-level manipulation.
+- **Continuity over accuracy** — prefer keeping sound flowing over perfect filtering (e.g. VAD fails open).
+- **Stateful station, anonymous listeners** — sessions are ephemeral, in-memory, identified only by a random ID.
+- **No external services** beyond archive.org — no database, no Redis.
+- Every goroutine must exit on `ctx.Done()`; every ffmpeg call must have a timeout context.
 
 ## Internet Archive API
 
-Base URL: `https://archive.org`
-- Search: `GET /advancedsearch.php?q=...&output=json`
-- Item metadata: `GET /metadata/{identifier}`
+- Search: `GET https://archive.org/advancedsearch.php?q=...&output=json`
+- Item metadata: `GET https://archive.org/metadata/{identifier}`
 - File download: `https://archive.org/download/{identifier}/{filename}`
 
-Media items must be filtered to audio/video mediatype with actual downloadable files.
+Set a descriptive `User-Agent` (see `fetcher/archive.go`) and respect rate limiting.
