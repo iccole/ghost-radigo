@@ -10,9 +10,13 @@ import (
 
 const (
 	bufferSize  = 32   // max MediaItems held locally
-	minClip     = 3.0  // seconds — pool splits into 150ms sweep chunks
-	maxClip     = 8.0  // seconds — more audio per ffmpeg invocation
-	silenceProb = 0.30 // 30% chance of emitting a noise gap between clips
+	minClip     = 0.1  // seconds
+	maxClip     = 2.0  // seconds
+	silenceProb = 0.15 // 15% chance of emitting a noise gap between clips
+
+	// Silence gaps have their own shorter duration so noise bursts stay brief.
+	minSilence = 0.3 // seconds
+	maxSilence = 1.5 // seconds
 
 	// Drift parameters.
 	normalDriftMax  = 3.0  // max year change per clip under normal drift
@@ -66,7 +70,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 
 		// Occasionally emit a silence gap.
 		if s.rng.Float64() < silenceProb {
-			dur := minClip + s.rng.Float64()*(maxClip-minClip)
+			dur := minSilence + s.rng.Float64()*(maxSilence-minSilence)
 			select {
 			case s.Out <- ClipJob{Silence: true, Duration: dur}:
 			case <-ctx.Done():

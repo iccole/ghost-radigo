@@ -10,15 +10,15 @@ import (
 	"github.com/isaiah/ghost-radigo/internal/cache"
 	"github.com/isaiah/ghost-radigo/internal/fetcher"
 	"github.com/isaiah/ghost-radigo/internal/logger"
-	"github.com/isaiah/ghost-radigo/internal/pool"
 	"github.com/isaiah/ghost-radigo/internal/processor"
 	"github.com/isaiah/ghost-radigo/internal/scanner"
 	"github.com/isaiah/ghost-radigo/internal/server"
+	"github.com/isaiah/ghost-radigo/internal/session"
 )
 
 const (
 	addr           = ":8080"
-	processorCount = 5
+	processorCount = 8
 	seed           = 0 // 0 = derive from current time
 )
 
@@ -50,8 +50,8 @@ func main() {
 	fetch    := fetcher.New(mediaC)
 	scan     := scanner.New(mediaC, jobC, s)
 	procPool := processor.NewPool(processorCount, jobC, clipC, clipCache)
-	clipPool := pool.New(clipC)
-	srv      := server.New(addr, clipPool)
+	sessions := session.NewManager(clipC)
+	srv      := server.New(addr, sessions)
 
 	// Run all stages concurrently.
 	go func() {
@@ -70,8 +70,8 @@ func main() {
 		}
 	}()
 	go func() {
-		if err := clipPool.Run(ctx); err != nil {
-			logger.Error("pool: %v", err)
+		if err := sessions.Run(ctx); err != nil {
+			logger.Error("session manager: %v", err)
 		}
 	}()
 

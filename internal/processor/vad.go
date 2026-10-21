@@ -14,9 +14,9 @@ import (
 
 const (
 	// vadThreshold is the minimum voice-band score [0,1] a clip must reach to
-	// be played. 0.30 is deliberately loose — we want phoneme fragments and
-	// partial syllables, not just clear intelligible speech.
-	vadThreshold = 0.30
+	// be played. 0.05 rejects only dead silence — at sweep speeds texture
+	// fragments are welcome regardless of speech content.
+	vadThreshold = 0.05
 
 	// vadSilenceFloor is the dB reference for an effectively silent signal.
 	// Scores are linearly mapped from [vadSilenceFloor, 0 dB] → [0, 1].

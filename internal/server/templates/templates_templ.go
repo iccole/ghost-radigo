@@ -5,131 +5,304 @@ package templates
 
 //lint:file-ignore SA4006 This context is only used if a nested component is present.
 
-import "github.com/a-h/templ"
-import templruntime "github.com/a-h/templ/runtime"
+import (
+	"context"
+	"io"
 
-import "strconv"
-
-// NowPlaying holds metadata for the currently streaming clip.
-type NowPlaying struct {
-	Identifier string
-	Title      string
-	Year       int
-	ArchiveURL string
-}
+	"github.com/a-h/templ"
+)
 
 // Page renders the full application shell.
 func Page() templ.Component {
-	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
-		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
-		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
-			return templ_7745c5c3_CtxErr
-		}
-		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
-		if !templ_7745c5c3_IsBuffer {
-			defer func() {
-				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
-				if templ_7745c5c3_Err == nil {
-					templ_7745c5c3_Err = templ_7745c5c3_BufErr
-				}
-			}()
-		}
-		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var1 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var1 == nil {
-			templ_7745c5c3_Var1 = templ.NopComponent
-		}
-		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<!doctype html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>GHOST RADIO</title><script src=\"https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js\"></script><style>\n\t\t\t\t*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n\n\t\t\t\tbody {\n\t\t\t\t\tbackground: #06080b;\n\t\t\t\t\tcolor: #7a9ab8;\n\t\t\t\t\tfont-family: 'Courier New', Courier, monospace;\n\t\t\t\t\theight: 100vh;\n\t\t\t\t\tdisplay: flex;\n\t\t\t\t\tflex-direction: column;\n\t\t\t\t\talign-items: center;\n\t\t\t\t\tjustify-content: center;\n\t\t\t\t\toverflow: hidden;\n\t\t\t\t\tuser-select: none;\n\t\t\t\t}\n\n\t\t\t\t#grain {\n\t\t\t\t\tposition: fixed; inset: 0; pointer-events: none;\n\t\t\t\t\topacity: 0; transition: opacity 2s ease;\n\t\t\t\t\tz-index: 10; mix-blend-mode: screen;\n\t\t\t\t}\n\t\t\t\t#grain.active { opacity: 1; }\n\n\t\t\t\t.vignette {\n\t\t\t\t\tposition: fixed; inset: 0; pointer-events: none;\n\t\t\t\t\tbackground: radial-gradient(ellipse at center, transparent 35%, rgba(2,4,8,0.9) 100%);\n\t\t\t\t\tz-index: 0;\n\t\t\t\t}\n\n\t\t\t\t.station {\n\t\t\t\t\tposition: relative; z-index: 1; text-align: center;\n\t\t\t\t\tdisplay: flex; flex-direction: column; align-items: center; gap: 2rem;\n\t\t\t\t}\n\n\t\t\t\t.title {\n\t\t\t\t\tfont-size: clamp(2.4rem, 8vw, 5rem); font-weight: 700;\n\t\t\t\t\tletter-spacing: 0.45em; color: #b8d4ee;\n\t\t\t\t\ttext-shadow: 0 0 30px rgba(120,170,220,0.35), 0 0 80px rgba(80,130,190,0.12);\n\t\t\t\t}\n\t\t\t\t.title.receiving { animation: signal-flicker 9s ease-in-out infinite; }\n\t\t\t\t@keyframes signal-flicker {\n\t\t\t\t\t0%, 93%, 100% { opacity: 1; }\n\t\t\t\t\t94%  { opacity: 0.55; }\n\t\t\t\t\t95%  { opacity: 0.9; }\n\t\t\t\t\t96%  { opacity: 0.4; }\n\t\t\t\t\t97%  { opacity: 1; }\n\t\t\t\t}\n\n\t\t\t\t.subtitle {\n\t\t\t\t\tfont-size: clamp(0.52rem, 1.6vw, 0.72rem);\n\t\t\t\t\tletter-spacing: 0.5em; color: #1e3048; margin-top: -1.6rem;\n\t\t\t\t}\n\n\t\t\t\t.divider { width: 100%; border: none; border-top: 1px solid #0c1620; }\n\n\t\t\t\t#year-display {\n\t\t\t\t\tfont-size: clamp(3rem, 10vw, 6rem); font-weight: 700;\n\t\t\t\t\tletter-spacing: 0.08em; color: #4a70a0;\n\t\t\t\t\tmin-width: 8ch; text-align: center;\n\t\t\t\t}\n\t\t\t\t#year-display.locked {\n\t\t\t\t\tcolor: #8ab4d8;\n\t\t\t\t\ttext-shadow: 0 0 30px rgba(100,160,220,0.3);\n\t\t\t\t\ttransition: color 0.4s, text-shadow 0.4s;\n\t\t\t\t}\n\n\t\t\t\t/* Idle state — question input */\n\t\t\t\t#ask-form {\n\t\t\t\t\tdisplay: flex; flex-direction: column; align-items: center; gap: 1.2rem;\n\t\t\t\t}\n\t\t\t\t#question-input {\n\t\t\t\t\tbackground: none; border: none; border-bottom: 1px solid #1a2a3a;\n\t\t\t\t\tcolor: #7a9ab8; font-family: inherit; font-size: 0.82rem;\n\t\t\t\t\tletter-spacing: 0.25em; text-align: center;\n\t\t\t\t\twidth: 26ch; padding: 0.4rem 0; outline: none;\n\t\t\t\t\tcaret-color: #5a80a8; user-select: text;\n\t\t\t\t}\n\t\t\t\t#question-input::placeholder { color: #1e3048; letter-spacing: 0.35em; }\n\t\t\t\t#question-input:focus { border-bottom-color: #3a5878; }\n\t\t\t\t#ask-btn {\n\t\t\t\t\tbackground: none; border: 1px solid #122030; color: #3a5878;\n\t\t\t\t\tfont-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em;\n\t\t\t\t\tpadding: 0.7rem 2.5rem; cursor: pointer;\n\t\t\t\t\ttransition: border-color 0.3s, color 0.3s, box-shadow 0.3s;\n\t\t\t\t}\n\t\t\t\t#ask-btn:hover { border-color: #5a80a8; color: #b8d4ee; box-shadow: 0 0 24px rgba(80,130,190,0.12); }\n\t\t\t\t#ask-btn:active { transform: scale(0.97); }\n\n\t\t\t\t/* Post-question state */\n\t\t\t\t#receive-ui {\n\t\t\t\t\tdisplay: none; flex-direction: column; align-items: center; gap: 1.8rem;\n\t\t\t\t}\n\t\t\t\t#receive-ui.visible { display: flex; }\n\n\t\t\t\t.question-display {\n\t\t\t\t\tfont-size: clamp(0.62rem, 1.8vw, 0.78rem); letter-spacing: 0.3em;\n\t\t\t\t\tcolor: #3a5878; max-width: 36ch; text-align: center; line-height: 1.8;\n\t\t\t\t}\n\n\t\t\t\t#meta {\n\t\t\t\t\tmin-height: 2.8rem; display: flex; flex-direction: column;\n\t\t\t\t\talign-items: center; gap: 0.35rem;\n\t\t\t\t\topacity: 0; transition: opacity 0.8s ease;\n\t\t\t\t}\n\t\t\t\t#meta.visible { opacity: 1; }\n\t\t\t\t.meta-title {\n\t\t\t\t\tfont-size: clamp(0.6rem, 1.8vw, 0.78rem); letter-spacing: 0.2em;\n\t\t\t\t\tcolor: #5a80a0; max-width: 36ch; overflow: hidden;\n\t\t\t\t\ttext-overflow: ellipsis; white-space: nowrap;\n\t\t\t\t}\n\t\t\t\t.meta-link {\n\t\t\t\t\tfont-size: clamp(0.5rem, 1.4vw, 0.62rem); letter-spacing: 0.25em;\n\t\t\t\t\tcolor: #1e3048; text-decoration: none; transition: color 0.2s;\n\t\t\t\t}\n\t\t\t\t.meta-link:hover { color: #5a80a0; }\n\n\t\t\t\t.controls { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }\n\n\t\t\t\t#status {\n\t\t\t\t\tfont-size: 0.68rem; letter-spacing: 0.5em; color: #1e3048;\n\t\t\t\t\theight: 1.2em; transition: color 0.4s;\n\t\t\t\t}\n\t\t\t\t#status.receiving { color: #5a80a8; }\n\t\t\t\t#status .dot { display: inline-block; }\n\t\t\t\t#status.receiving .dot { animation: breathe 3s ease-in-out infinite; }\n\t\t\t\t@keyframes breathe {\n\t\t\t\t\t0%, 100% { opacity: 0.15; }\n\t\t\t\t\t50%       { opacity: 1; }\n\t\t\t\t}\n\n\t\t\t\t#hold-btn {\n\t\t\t\t\tbackground: none; border: 1px solid #122030; color: #3a5878;\n\t\t\t\t\tfont-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em;\n\t\t\t\t\tpadding: 0.9rem 3rem; cursor: pointer;\n\t\t\t\t\ttransition: border-color 0.3s, color 0.3s, box-shadow 0.3s;\n\t\t\t\t\ttouch-action: none; -webkit-user-select: none; user-select: none;\n\t\t\t\t}\n\t\t\t\t#hold-btn:hover { border-color: #3a5878; color: #7a9ab8; }\n\t\t\t\t#hold-btn.holding {\n\t\t\t\t\tborder-color: #8ab4d8; color: #c8e4f8;\n\t\t\t\t\tbox-shadow: 0 0 40px rgba(80,130,190,0.25), 0 0 80px rgba(60,110,170,0.1);\n\t\t\t\t}\n\n\t\t\t\t.reset-link {\n\t\t\t\t\tbackground: none; border: none; color: #1e3048; font-family: inherit;\n\t\t\t\t\tfont-size: 0.55rem; letter-spacing: 0.4em; cursor: pointer;\n\t\t\t\t\tpadding: 0.2rem; transition: color 0.3s;\n\t\t\t\t}\n\t\t\t\t.reset-link:hover { color: #4a70a0; }\n\t\t\t</style></head><body><canvas id=\"grain\"></canvas><div class=\"vignette\"></div><div class=\"station\"><div><div class=\"title\" id=\"title\">GHOST RADIO</div><div class=\"subtitle\">UNKNOWN SIGNAL · 1900—1980</div></div><hr class=\"divider\"><div id=\"year-display\">——</div><div id=\"ask-form\"><input id=\"question-input\" type=\"text\" placeholder=\"ASK A QUESTION\" autocomplete=\"off\" spellcheck=\"false\"> <button id=\"ask-btn\">TRANSMIT</button></div><div id=\"receive-ui\"><div id=\"question-text\" class=\"question-display\"></div><div id=\"meta\" hx-get=\"/fragment/now\" hx-trigger=\"every 4s\" hx-swap=\"innerHTML\"></div><div class=\"controls\"><div id=\"status\"><span class=\"dot\">◌</span>&nbsp;READY</div><button id=\"hold-btn\">HOLD TO RECEIVE</button> <button id=\"reset-btn\" class=\"reset-link\">← NEW QUESTION</button></div></div></div><audio id=\"audio\" preload=\"none\"></audio><script>\n\t\t\t\t(function () {\n\t\t\t\t\t'use strict';\n\n\t\t\t\t\t// ── TV static ─────────────────────────────────────────────────────────────\n\t\t\t\t\tconst canvas = document.getElementById('grain');\n\t\t\t\t\tconst gctx   = canvas.getContext('2d');\n\t\t\t\t\tlet grainTimer = null;\n\n\t\t\t\t\tfunction resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }\n\t\t\t\t\twindow.addEventListener('resize', resizeCanvas);\n\t\t\t\t\tresizeCanvas();\n\n\t\t\t\t\tfunction drawStatic() {\n\t\t\t\t\t\tconst w = canvas.width, h = canvas.height;\n\t\t\t\t\t\tconst img = gctx.createImageData(w, h);\n\t\t\t\t\t\tconst d = img.data;\n\t\t\t\t\t\tfor (let i = 0; i < d.length; i += 4) {\n\t\t\t\t\t\t\tif (Math.random() < 0.055) {\n\t\t\t\t\t\t\t\tconst v = 160 + (Math.random() * 95 | 0);\n\t\t\t\t\t\t\t\td[i] = d[i+1] = d[i+2] = v;\n\t\t\t\t\t\t\t\td[i+3] = 25 + (Math.random() * 40 | 0);\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t}\n\t\t\t\t\t\tgctx.putImageData(img, 0, 0);\n\t\t\t\t\t\tgrainTimer = setTimeout(() => requestAnimationFrame(drawStatic), 80);\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction startGrain() { canvas.classList.add('active'); drawStatic(); }\n\t\t\t\t\tfunction stopGrain()  {\n\t\t\t\t\t\tcanvas.classList.remove('active');\n\t\t\t\t\t\tclearTimeout(grainTimer); grainTimer = null;\n\t\t\t\t\t\tgctx.clearRect(0, 0, canvas.width, canvas.height);\n\t\t\t\t\t}\n\n\t\t\t\t\t// ── Year display — erratic jumps ──────────────────────────────────────────\n\t\t\t\t\tconst yearEl = document.getElementById('year-display');\n\t\t\t\t\tlet yearTimer  = null;\n\t\t\t\t\tlet lockedYear = null;\n\t\t\t\t\tlet lockTimer  = null;\n\n\t\t\t\t\tfunction randomYear() { return 1900 + Math.floor(Math.random() * 81); }\n\n\t\t\t\t\tfunction jumpYear() {\n\t\t\t\t\t\tyearEl.textContent = (lockedYear !== null)\n\t\t\t\t\t\t\t? lockedYear\n\t\t\t\t\t\t\t: (Math.random() < 0.15 ? yearEl.textContent : randomYear());\n\t\t\t\t\t\tyearTimer = setTimeout(jumpYear, 120 + Math.random() * 480);\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction startYear() { if (!yearTimer) jumpYear(); }\n\n\t\t\t\t\tfunction pauseYear() {\n\t\t\t\t\t\tclearTimeout(yearTimer); yearTimer = null;\n\t\t\t\t\t\tclearTimeout(lockTimer); lockTimer = null;\n\t\t\t\t\t\tlockedYear = null;\n\t\t\t\t\t\tyearEl.classList.remove('locked');\n\t\t\t\t\t\t// leave yearEl.textContent showing last year\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction resetYear() {\n\t\t\t\t\t\tpauseYear();\n\t\t\t\t\t\tyearEl.textContent = '——';\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction lockYear(year) {\n\t\t\t\t\t\tif (!year) return;\n\t\t\t\t\t\tlockedYear = year;\n\t\t\t\t\t\tyearEl.classList.add('locked');\n\t\t\t\t\t\tclearTimeout(lockTimer);\n\t\t\t\t\t\tlockTimer = setTimeout(() => {\n\t\t\t\t\t\t\tlockedYear = null;\n\t\t\t\t\t\t\tyearEl.classList.remove('locked');\n\t\t\t\t\t\t}, 5000);\n\t\t\t\t\t}\n\n\t\t\t\t\t// ── HTMX metadata swap ────────────────────────────────────────────────────\n\t\t\t\t\tconst metaEl  = document.getElementById('meta');\n\t\t\t\t\tlet receiving = false;\n\n\t\t\t\t\tdocument.body.addEventListener('htmx:afterSwap', function (e) {\n\t\t\t\t\t\tif (e.detail.target.id !== 'meta') return;\n\t\t\t\t\t\tconst inner = metaEl.querySelector('[data-year]');\n\t\t\t\t\t\tif (receiving && inner) {\n\t\t\t\t\t\t\tmetaEl.classList.add('visible');\n\t\t\t\t\t\t\tconst y = parseInt(inner.dataset.year, 10);\n\t\t\t\t\t\t\tif (y) lockYear(y);\n\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\tmetaEl.classList.remove('visible');\n\t\t\t\t\t\t}\n\t\t\t\t\t});\n\n\t\t\t\t\t// ── Elements ──────────────────────────────────────────────────────────────\n\t\t\t\t\tconst askForm       = document.getElementById('ask-form');\n\t\t\t\t\tconst questionInput = document.getElementById('question-input');\n\t\t\t\t\tconst askBtn        = document.getElementById('ask-btn');\n\t\t\t\t\tconst receiveUI     = document.getElementById('receive-ui');\n\t\t\t\t\tconst questionText  = document.getElementById('question-text');\n\t\t\t\t\tconst status        = document.getElementById('status');\n\t\t\t\t\tconst holdBtn       = document.getElementById('hold-btn');\n\t\t\t\t\tconst resetBtn      = document.getElementById('reset-btn');\n\t\t\t\t\tconst titleEl       = document.getElementById('title');\n\t\t\t\t\tconst audio         = document.getElementById('audio');\n\n\t\t\t\t\t// ── Question submit ───────────────────────────────────────────────────────\n\t\t\t\t\tfunction submitQuestion() {\n\t\t\t\t\t\tconst q = questionInput.value.trim().toUpperCase();\n\t\t\t\t\t\tif (!q) return;\n\t\t\t\t\t\tquestionText.textContent = '> ' + q;\n\t\t\t\t\t\taskForm.style.display = 'none';\n\t\t\t\t\t\treceiveUI.classList.add('visible');\n\t\t\t\t\t}\n\n\t\t\t\t\taskBtn.addEventListener('click', submitQuestion);\n\t\t\t\t\tquestionInput.addEventListener('keydown', function (e) {\n\t\t\t\t\t\tif (e.key === 'Enter') submitQuestion();\n\t\t\t\t\t});\n\n\t\t\t\t\t// ── Hold to receive ───────────────────────────────────────────────────────\n\t\t\t\t\tfunction startReceiving() {\n\t\t\t\t\t\tif (receiving) return;\n\t\t\t\t\t\treceiving = true;\n\t\t\t\t\t\tholdBtn.classList.add('holding');\n\t\t\t\t\t\ttitleEl.classList.add('receiving');\n\t\t\t\t\t\tstatus.className = 'receiving';\n\t\t\t\t\t\tstatus.innerHTML = '<span class=\"dot\">◌</span>&nbsp;RECEIVING';\n\t\t\t\t\t\tstartGrain();\n\t\t\t\t\t\tstartYear();\n\t\t\t\t\t\taudio.src = '/response';\n\t\t\t\t\t\taudio.play().catch(function () {});\n\t\t\t\t\t}\n\n\t\t\t\t\tfunction stopReceiving() {\n\t\t\t\t\t\tif (!receiving) return;\n\t\t\t\t\t\treceiving = false;\n\t\t\t\t\t\tholdBtn.classList.remove('holding');\n\t\t\t\t\t\ttitleEl.classList.remove('receiving');\n\t\t\t\t\t\tstatus.className = '';\n\t\t\t\t\t\tstatus.innerHTML = '<span class=\"dot\">◌</span>&nbsp;READY';\n\t\t\t\t\t\tstopGrain();\n\t\t\t\t\t\tmetaEl.classList.remove('visible');\n\t\t\t\t\t\taudio.pause();\n\t\t\t\t\t\taudio.src = '';\n\t\t\t\t\t\tpauseYear();\n\t\t\t\t\t}\n\n\t\t\t\t\tholdBtn.addEventListener('mousedown', startReceiving);\n\t\t\t\t\tholdBtn.addEventListener('touchstart', function (e) {\n\t\t\t\t\t\te.preventDefault();\n\t\t\t\t\t\tstartReceiving();\n\t\t\t\t\t}, { passive: false });\n\t\t\t\t\tholdBtn.addEventListener('mouseup', stopReceiving);\n\t\t\t\t\tholdBtn.addEventListener('touchend', stopReceiving);\n\t\t\t\t\tholdBtn.addEventListener('mouseleave', stopReceiving);\n\n\t\t\t\t\taudio.addEventListener('ended', stopReceiving);\n\t\t\t\t\taudio.addEventListener('error', stopReceiving);\n\n\t\t\t\t\t// ── Reset ─────────────────────────────────────────────────────────────────\n\t\t\t\t\tresetBtn.addEventListener('click', function () {\n\t\t\t\t\t\tstopReceiving();\n\t\t\t\t\t\treceiveUI.classList.remove('visible');\n\t\t\t\t\t\taskForm.style.display = '';\n\t\t\t\t\t\tquestionInput.value = '';\n\t\t\t\t\t\tresetYear();\n\t\t\t\t\t\tmetaEl.classList.remove('visible');\n\t\t\t\t\t});\n\t\t\t\t})();\n\t\t\t</script></body></html>")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		return nil
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		_, err := io.WriteString(w, pageHTML)
+		return err
 	})
 }
 
-// NowFragment is the HTMX partial — swapped into #meta every 4 s.
-func NowFragment(np NowPlaying) templ.Component {
-	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
-		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
-		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
-			return templ_7745c5c3_CtxErr
+var _ = templ.Component(nil)
+
+const pageHTML = `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>GHOST RADIO</title><style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+	background: #06080b; color: #7a9ab8;
+	font-family: 'Courier New', Courier, monospace;
+	min-height: 100vh; display: flex; flex-direction: column;
+	align-items: center; justify-content: center;
+	overflow-x: hidden; user-select: none;
+}
+#grain { position: fixed; inset: 0; pointer-events: none; opacity: 0; transition: opacity 2s ease; z-index: 10; mix-blend-mode: screen; }
+#grain.active { opacity: 1; }
+.vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, transparent 35%, rgba(2,4,8,0.9) 100%); z-index: 0; }
+.station { position: relative; z-index: 1; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 2rem; padding: 2rem 1rem; width: 100%; max-width: 480px; }
+.title { font-size: clamp(2.4rem, 8vw, 5rem); font-weight: 700; letter-spacing: 0.45em; color: #b8d4ee; text-shadow: 0 0 30px rgba(120,170,220,0.35), 0 0 80px rgba(80,130,190,0.12); }
+.title.receiving { animation: signal-flicker 9s ease-in-out infinite; }
+@keyframes signal-flicker { 0%, 93%, 100% { opacity: 1; } 94% { opacity: 0.55; } 95% { opacity: 0.9; } 96% { opacity: 0.4; } 97% { opacity: 1; } }
+.subtitle { font-size: clamp(0.52rem, 1.6vw, 0.72rem); letter-spacing: 0.5em; color: #1e3048; margin-top: -1.6rem; }
+.divider { width: 100%; border: none; border-top: 1px solid #0c1620; }
+#year-display { font-size: clamp(3rem, 10vw, 6rem); font-weight: 700; letter-spacing: 0.08em; color: #4a70a0; min-width: 8ch; text-align: center; }
+#year-display.locked { color: #8ab4d8; text-shadow: 0 0 30px rgba(100,160,220,0.3); transition: color 0.4s, text-shadow 0.4s; }
+#ask-form { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }
+#question-input { background: none; border: none; border-bottom: 1px solid #1a2a3a; color: #7a9ab8; font-family: inherit; font-size: 0.82rem; letter-spacing: 0.25em; text-align: center; width: 26ch; padding: 0.4rem 0; outline: none; caret-color: #5a80a8; user-select: text; }
+#question-input::placeholder { color: #1e3048; letter-spacing: 0.35em; }
+#question-input:focus { border-bottom-color: #3a5878; }
+#ask-btn { background: none; border: 1px solid #122030; color: #3a5878; font-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em; padding: 0.7rem 2.5rem; cursor: pointer; transition: border-color 0.3s, color 0.3s, box-shadow 0.3s; }
+#ask-btn:hover { border-color: #5a80a8; color: #b8d4ee; box-shadow: 0 0 24px rgba(80,130,190,0.12); }
+#ask-btn:active { transform: scale(0.97); }
+#scan-ui { display: none; flex-direction: column; align-items: center; gap: 1.6rem; width: 100%; }
+#scan-ui.visible { display: flex; }
+.question-display { font-size: clamp(0.62rem, 1.8vw, 0.78rem); letter-spacing: 0.3em; color: #3a5878; max-width: 36ch; text-align: center; line-height: 1.8; }
+#clip-list { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; max-height: 240px; overflow-y: auto; }
+#clip-list:empty { display: none; }
+.clip-item { display: grid; grid-template-columns: 4ch 1fr auto; align-items: center; gap: 0.8rem; padding: 0.5rem 0.75rem; border: 1px solid #0c1620; opacity: 0; animation: fadeSlideIn 0.4s ease forwards; transition: border-color 0.3s; }
+.clip-item.playing { border-color: #2a4a6a; background: rgba(20,40,70,0.3); }
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.clip-year { font-size: 0.65rem; letter-spacing: 0.1em; color: #4a70a0; text-align: right; }
+.clip-title { font-size: 0.65rem; letter-spacing: 0.12em; color: #5a7a98; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.clip-play { background: none; border: none; color: #2a4a6a; font-size: 0.7rem; cursor: pointer; padding: 0.2rem 0.4rem; transition: color 0.2s; font-family: inherit; }
+.clip-play:hover { color: #7a9ab8; }
+.controls { display: flex; flex-direction: column; align-items: center; gap: 1.0rem; }
+#status { font-size: 0.68rem; letter-spacing: 0.5em; color: #1e3048; height: 1.2em; transition: color 0.4s; }
+#status.scanning { color: #5a80a8; }
+#status .dot { display: inline-block; }
+#status.scanning .dot { animation: breathe 3s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
+#stop-btn { background: none; border: 1px solid #122030; color: #3a5878; font-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em; padding: 0.7rem 2.5rem; cursor: pointer; transition: border-color 0.3s, color 0.3s; }
+#stop-btn:hover:not(:disabled) { border-color: #5a80a8; color: #b8d4ee; }
+#stop-btn:disabled { opacity: 0.4; cursor: default; }
+.reset-link { background: none; border: none; color: #1e3048; font-family: inherit; font-size: 0.55rem; letter-spacing: 0.4em; cursor: pointer; padding: 0.2rem; transition: color 0.3s; }
+.reset-link:hover { color: #4a70a0; }
+</style></head><body>
+<canvas id="grain"></canvas>
+<div class="vignette"></div>
+<div class="station">
+  <div>
+    <div class="title" id="title">GHOST RADIO</div>
+    <div class="subtitle">UNKNOWN SIGNAL · 1900—1980</div>
+  </div>
+  <hr class="divider">
+  <div id="year-display">——</div>
+  <div id="ask-form">
+    <input id="question-input" type="text" placeholder="ASK A QUESTION" autocomplete="off" spellcheck="false">
+    <button id="ask-btn">TRANSMIT</button>
+  </div>
+  <div id="scan-ui">
+    <div id="question-text" class="question-display"></div>
+    <div id="clip-list"></div>
+    <div class="controls">
+      <div id="status"><span class="dot">◌</span>&nbsp;SCANNING</div>
+      <button id="stop-btn">STOP</button>
+      <button id="reset-btn" class="reset-link">← NEW QUESTION</button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+'use strict';
+
+const canvas = document.getElementById('grain');
+const gctx   = canvas.getContext('2d');
+let grainTimer = null;
+
+function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function drawStatic() {
+	const w = canvas.width, h = canvas.height;
+	const img = gctx.createImageData(w, h);
+	const d = img.data;
+	for (let i = 0; i < d.length; i += 4) {
+		if (Math.random() < 0.055) {
+			const v = 160 + (Math.random() * 95 | 0);
+			d[i] = d[i+1] = d[i+2] = v;
+			d[i+3] = 25 + (Math.random() * 40 | 0);
 		}
-		templ_7745c5c3_Buffer, templ_7745c5c3_IsBuffer := templruntime.GetBuffer(templ_7745c5c3_W)
-		if !templ_7745c5c3_IsBuffer {
-			defer func() {
-				templ_7745c5c3_BufErr := templruntime.ReleaseBuffer(templ_7745c5c3_Buffer)
-				if templ_7745c5c3_Err == nil {
-					templ_7745c5c3_Err = templ_7745c5c3_BufErr
-				}
-			}()
-		}
-		ctx = templ.InitializeContext(ctx)
-		templ_7745c5c3_Var2 := templ.GetChildren(ctx)
-		if templ_7745c5c3_Var2 == nil {
-			templ_7745c5c3_Var2 = templ.NopComponent
-		}
-		ctx = templ.ClearChildren(ctx)
-		if np.Identifier != "" {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div data-year=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var3 string
-			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.Itoa(np.Year))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/server/templates/templates.templ`, Line: 379, Col: 40}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\"><div class=\"meta-title\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var4 string
-			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(np.Title)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/server/templates/templates.templ`, Line: 380, Col: 37}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</div><a class=\"meta-link\" href=\"")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var5 templ.SafeURL
-			templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs(templ.SafeURL(np.ArchiveURL))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/server/templates/templates.templ`, Line: 381, Col: 59}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\" target=\"_blank\" rel=\"noopener\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var6 string
-			templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(np.Identifier)
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `internal/server/templates/templates.templ`, Line: 381, Col: 108}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</a></div>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		return nil
-	})
+	}
+	gctx.putImageData(img, 0, 0);
+	grainTimer = setTimeout(function () { requestAnimationFrame(drawStatic); }, 80);
+}
+function startGrain() { canvas.classList.add('active'); drawStatic(); }
+function stopGrain() {
+	canvas.classList.remove('active');
+	clearTimeout(grainTimer); grainTimer = null;
+	gctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
-var _ = templruntime.GeneratedTemplate
+const yearEl = document.getElementById('year-display');
+let yearTimer = null, lockedYear = null, lockTimer = null;
+
+function randomYear() { return 1900 + Math.floor(Math.random() * 81); }
+function jumpYear() {
+	yearEl.textContent = (lockedYear !== null) ? lockedYear : (Math.random() < 0.15 ? yearEl.textContent : randomYear());
+	yearTimer = setTimeout(jumpYear, 120 + Math.random() * 480);
+}
+function startYear() { if (!yearTimer) jumpYear(); }
+function pauseYear() {
+	clearTimeout(yearTimer); yearTimer = null;
+	clearTimeout(lockTimer); lockTimer = null;
+	lockedYear = null; yearEl.classList.remove('locked');
+}
+function resetYear() { pauseYear(); yearEl.textContent = '\u2014\u2014'; }
+function lockYear(year) {
+	const y = parseInt(year, 10);
+	if (!y) return;
+	lockedYear = y; yearEl.classList.add('locked');
+	clearTimeout(lockTimer);
+	lockTimer = setTimeout(function () { lockedYear = null; yearEl.classList.remove('locked'); }, 5000);
+}
+
+let sweepAC = null;
+function startSweep() {
+	if (sweepAC) return;
+	try { sweepAC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+	const bufSize = sweepAC.sampleRate;
+	const noiseBuf = sweepAC.createBuffer(1, bufSize, sweepAC.sampleRate);
+	const nd = noiseBuf.getChannelData(0);
+	for (let i = 0; i < bufSize; i++) nd[i] = Math.random() * 2 - 1;
+	const src = sweepAC.createBufferSource();
+	src.buffer = noiseBuf; src.loop = true; src.start();
+	const bp = sweepAC.createBiquadFilter();
+	bp.type = 'bandpass'; bp.Q.value = 14; bp.frequency.value = 1000;
+	const vol = sweepAC.createGain();
+	vol.gain.setValueAtTime(0, sweepAC.currentTime);
+	vol.gain.linearRampToValueAtTime(0.13, sweepAC.currentTime + 0.4);
+	src.connect(bp); bp.connect(vol); vol.connect(sweepAC.destination);
+	sweepAC._nodes = { src, bp, vol };
+	(function tick() {
+		if (!sweepAC) return;
+		const t = sweepAC.currentTime, dur = 0.04 + Math.random() * 0.18;
+		bp.frequency.cancelScheduledValues(t);
+		bp.frequency.setValueAtTime(100 + Math.random() * 2900, t);
+		bp.frequency.linearRampToValueAtTime(100 + Math.random() * 2900, t + dur);
+		setTimeout(tick, dur * 1000);
+	})();
+}
+function stopSweep() {
+	if (!sweepAC) return;
+	const ac = sweepAC; sweepAC = null;
+	const v = ac._nodes && ac._nodes.vol;
+	if (v) {
+		v.gain.cancelScheduledValues(ac.currentTime);
+		v.gain.setValueAtTime(v.gain.value, ac.currentTime);
+		v.gain.linearRampToValueAtTime(0, ac.currentTime + 0.3);
+	}
+	setTimeout(function () { ac.close(); }, 400);
+}
+
+const askForm       = document.getElementById('ask-form');
+const questionInput = document.getElementById('question-input');
+const askBtn        = document.getElementById('ask-btn');
+const scanUI        = document.getElementById('scan-ui');
+const questionText  = document.getElementById('question-text');
+const clipListEl    = document.getElementById('clip-list');
+const statusEl      = document.getElementById('status');
+const stopBtn       = document.getElementById('stop-btn');
+const resetBtn      = document.getElementById('reset-btn');
+const titleEl       = document.getElementById('title');
+
+let sessionId = null, evtSrc = null, playQueue = [], isPlaying = false;
+const clipAudio = new Audio();
+
+function submitQuestion() {
+	const q = questionInput.value.trim().toUpperCase();
+	if (!q) return;
+	questionText.textContent = '> ' + q;
+	askForm.style.display = 'none';
+	scanUI.classList.add('visible');
+	fetch('/session', { method: 'POST' })
+		.then(function (r) { return r.json(); })
+		.then(function (d) { sessionId = d.id; beginScanning(); })
+		.catch(function () { statusEl.textContent = 'CONNECTION ERROR'; });
+}
+askBtn.addEventListener('click', submitQuestion);
+questionInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') submitQuestion(); });
+
+function beginScanning() {
+	titleEl.classList.add('receiving');
+	statusEl.className = 'scanning';
+	statusEl.innerHTML = '<span class="dot">\u25CC</span>&nbsp;SCANNING';
+	stopBtn.disabled = false; stopBtn.textContent = 'STOP';
+	startGrain(); startYear(); startSweep();
+	evtSrc = new EventSource('/session/' + sessionId + '/events');
+	evtSrc.addEventListener('clip', function (e) {
+		const clip = JSON.parse(e.data);
+		addClipToList(clip);
+		playQueue.push(clip.index);
+		if (!isPlaying) playNext();
+	});
+	evtSrc.addEventListener('done', function () {
+		if (evtSrc) { evtSrc.close(); evtSrc = null; }
+		onScanComplete();
+	});
+	evtSrc.onerror = function () { if (evtSrc) { evtSrc.close(); evtSrc = null; } };
+}
+
+function addClipToList(clip) {
+	const item = document.createElement('div');
+	item.className = 'clip-item'; item.id = 'clip-' + clip.index;
+	const year = document.createElement('span');
+	year.className = 'clip-year'; year.textContent = clip.year || '????';
+	const title = document.createElement('span');
+	title.className = 'clip-title'; title.textContent = clip.title || clip.identifier;
+	const btn = document.createElement('button');
+	btn.className = 'clip-play'; btn.textContent = '\u25B6';
+	btn.addEventListener('click', function () { playClip(clip.index); });
+	item.append(year, title, btn);
+	clipListEl.appendChild(item);
+}
+
+function playNext() {
+	if (playQueue.length === 0) { isPlaying = false; return; }
+	isPlaying = true; playClip(playQueue.shift());
+}
+
+function playClip(idx) {
+	if (!sessionId) return;
+	document.querySelectorAll('.clip-item.playing').forEach(function (el) { el.classList.remove('playing'); });
+	const item = document.getElementById('clip-' + idx);
+	if (item) {
+		item.classList.add('playing');
+		const y = item.querySelector('.clip-year');
+		if (y) lockYear(y.textContent);
+	}
+	clipAudio.pause();
+	clipAudio.src = '/clip/' + sessionId + '/' + idx;
+	clipAudio.onended = function () { if (item) item.classList.remove('playing'); isPlaying = false; playNext(); };
+	clipAudio.onerror = function () { if (item) item.classList.remove('playing'); isPlaying = false; playNext(); };
+	clipAudio.play().catch(function () {});
+}
+
+function onScanComplete() {
+	titleEl.classList.remove('receiving');
+	statusEl.className = '';
+	statusEl.innerHTML = '<span class="dot">\u2713</span>&nbsp;5 RECEIVED';
+	stopSweep(); stopGrain();
+	stopBtn.textContent = 'DONE'; stopBtn.disabled = true;
+}
+
+function stopSession() {
+	if (evtSrc) { evtSrc.close(); evtSrc = null; }
+	clipAudio.pause(); clipAudio.src = '';
+	isPlaying = false; playQueue = [];
+	if (sessionId) fetch('/session/' + sessionId, { method: 'DELETE' }).catch(function () {});
+	titleEl.classList.remove('receiving');
+	statusEl.className = '';
+	statusEl.innerHTML = '<span class="dot">\u25CC</span>&nbsp;STOPPED';
+	stopSweep(); stopGrain(); pauseYear();
+	document.querySelectorAll('.clip-item.playing').forEach(function (el) { el.classList.remove('playing'); });
+}
+
+function reset() {
+	stopSession();
+	sessionId = null; stopBtn.disabled = false; stopBtn.textContent = 'STOP';
+	scanUI.classList.remove('visible'); askForm.style.display = '';
+	questionInput.value = ''; clipListEl.innerHTML = '';
+	resetYear();
+}
+
+stopBtn.addEventListener('click', stopSession);
+resetBtn.addEventListener('click', reset);
+})();
+</script>
+</body></html>`

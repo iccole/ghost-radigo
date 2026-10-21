@@ -2,7 +2,6 @@ package pool
 
 import (
 	"context"
-	"math/rand"
 
 	"github.com/isaiah/ghost-radigo/internal/processor"
 )
@@ -18,10 +17,6 @@ const (
 	// chunkSecs is the audio duration represented by one chunk.
 	chunkSecs = 0.150
 
-	// minChunks / maxChunks bounds the random burst length taken from each
-	// clip before switching sources. 1–6 chunks = 150 ms – 900 ms per source.
-	minChunks = 1
-	maxChunks = 6
 )
 
 // Pool slices pre-encoded clips into ~150 ms sweep chunks so the HTTP handler
@@ -48,13 +43,8 @@ func (p *Pool) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			n := minChunks + rand.Intn(maxChunks-minChunks+1)
 			data := clip.Data
-			if len(data) > chunkBytes {
-				offset := rand.Intn(len(data)-chunkBytes) / chunkBytes * chunkBytes
-				data = data[offset:]
-			}
-			for i := 0; i < n && len(data) > 0; i++ {
+			for len(data) > 0 {
 				end := chunkBytes
 				if end > len(data) {
 					end = len(data)
@@ -83,4 +73,9 @@ func (p *Pool) Run(ctx context.Context) error {
 // C returns the receive-only chunk channel for streaming handlers.
 func (p *Pool) C() <-chan processor.ProcessedClip {
 	return p.clips
+}
+
+// Len returns the number of chunks currently buffered.
+func (p *Pool) Len() int {
+	return len(p.clips)
 }

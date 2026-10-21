@@ -1,15 +1,5 @@
 package templates
 
-import "strconv"
-
-// NowPlaying holds metadata for the currently streaming clip.
-type NowPlaying struct {
-	Identifier string
-	Title      string
-	Year       int
-	ArchiveURL string
-}
-
 // Page renders the full application shell.
 templ Page() {
 	<!DOCTYPE html>
@@ -18,7 +8,6 @@ templ Page() {
 			<meta charset="UTF-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 			<title>GHOST RADIO</title>
-			<script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
 			<style>
 				*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -26,12 +15,12 @@ templ Page() {
 					background: #06080b;
 					color: #7a9ab8;
 					font-family: 'Courier New', Courier, monospace;
-					height: 100vh;
+					min-height: 100vh;
 					display: flex;
 					flex-direction: column;
 					align-items: center;
 					justify-content: center;
-					overflow: hidden;
+					overflow-x: hidden;
 					user-select: none;
 				}
 
@@ -51,6 +40,7 @@ templ Page() {
 				.station {
 					position: relative; z-index: 1; text-align: center;
 					display: flex; flex-direction: column; align-items: center; gap: 2rem;
+					padding: 2rem 1rem; width: 100%; max-width: 480px;
 				}
 
 				.title {
@@ -85,10 +75,8 @@ templ Page() {
 					transition: color 0.4s, text-shadow 0.4s;
 				}
 
-				/* Idle state — question input */
-				#ask-form {
-					display: flex; flex-direction: column; align-items: center; gap: 1.2rem;
-				}
+				/* Idle state */
+				#ask-form { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }
 				#question-input {
 					background: none; border: none; border-bottom: 1px solid #1a2a3a;
 					color: #7a9ab8; font-family: inherit; font-size: 0.82rem;
@@ -107,60 +95,51 @@ templ Page() {
 				#ask-btn:hover { border-color: #5a80a8; color: #b8d4ee; box-shadow: 0 0 24px rgba(80,130,190,0.12); }
 				#ask-btn:active { transform: scale(0.97); }
 
-				/* Post-question state */
-				#receive-ui {
-					display: none; flex-direction: column; align-items: center; gap: 1.8rem;
-				}
-				#receive-ui.visible { display: flex; }
+				/* Scanning state */
+				#scan-ui { display: none; flex-direction: column; align-items: center; gap: 1.6rem; width: 100%; }
+				#scan-ui.visible { display: flex; }
 
 				.question-display {
 					font-size: clamp(0.62rem, 1.8vw, 0.78rem); letter-spacing: 0.3em;
 					color: #3a5878; max-width: 36ch; text-align: center; line-height: 1.8;
 				}
 
-				#meta {
-					min-height: 2.8rem; display: flex; flex-direction: column;
-					align-items: center; gap: 0.35rem;
-					opacity: 0; transition: opacity 0.8s ease;
-				}
-				#meta.visible { opacity: 1; }
-				.meta-title {
-					font-size: clamp(0.6rem, 1.8vw, 0.78rem); letter-spacing: 0.2em;
-					color: #5a80a0; max-width: 36ch; overflow: hidden;
-					text-overflow: ellipsis; white-space: nowrap;
-				}
-				.meta-link {
-					font-size: clamp(0.5rem, 1.4vw, 0.62rem); letter-spacing: 0.25em;
-					color: #1e3048; text-decoration: none; transition: color 0.2s;
-				}
-				.meta-link:hover { color: #5a80a0; }
+				#clip-list { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; max-height: 240px; overflow-y: auto; }
+				#clip-list:empty { display: none; }
 
-				.controls { display: flex; flex-direction: column; align-items: center; gap: 1.2rem; }
-
-				#status {
-					font-size: 0.68rem; letter-spacing: 0.5em; color: #1e3048;
-					height: 1.2em; transition: color 0.4s;
+				.clip-item {
+					display: grid; grid-template-columns: 4ch 1fr auto;
+					align-items: center; gap: 0.8rem; padding: 0.5rem 0.75rem;
+					border: 1px solid #0c1620;
+					opacity: 0; animation: fadeSlideIn 0.4s ease forwards;
+					transition: border-color 0.3s;
 				}
-				#status.receiving { color: #5a80a8; }
+				.clip-item.playing { border-color: #2a4a6a; background: rgba(20,40,70,0.3); }
+				@keyframes fadeSlideIn {
+					from { opacity: 0; transform: translateY(4px); }
+					to   { opacity: 1; transform: translateY(0); }
+				}
+				.clip-year { font-size: 0.65rem; letter-spacing: 0.1em; color: #4a70a0; text-align: right; }
+				.clip-title { font-size: 0.65rem; letter-spacing: 0.12em; color: #5a7a98; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+				.clip-play { background: none; border: none; color: #2a4a6a; font-size: 0.7rem; cursor: pointer; padding: 0.2rem 0.4rem; transition: color 0.2s; font-family: inherit; }
+				.clip-play:hover { color: #7a9ab8; }
+
+				.controls { display: flex; flex-direction: column; align-items: center; gap: 1.0rem; }
+
+				#status { font-size: 0.68rem; letter-spacing: 0.5em; color: #1e3048; height: 1.2em; transition: color 0.4s; }
+				#status.scanning { color: #5a80a8; }
 				#status .dot { display: inline-block; }
-				#status.receiving .dot { animation: breathe 3s ease-in-out infinite; }
-				@keyframes breathe {
-					0%, 100% { opacity: 0.15; }
-					50%       { opacity: 1; }
-				}
+				#status.scanning .dot { animation: breathe 3s ease-in-out infinite; }
+				@keyframes breathe { 0%, 100% { opacity: 0.15; } 50% { opacity: 1; } }
 
-				#hold-btn {
+				#stop-btn {
 					background: none; border: 1px solid #122030; color: #3a5878;
 					font-family: inherit; font-size: 0.72rem; letter-spacing: 0.5em;
-					padding: 0.9rem 3rem; cursor: pointer;
-					transition: border-color 0.3s, color 0.3s, box-shadow 0.3s;
-					touch-action: none; -webkit-user-select: none; user-select: none;
+					padding: 0.7rem 2.5rem; cursor: pointer;
+					transition: border-color 0.3s, color 0.3s;
 				}
-				#hold-btn:hover { border-color: #3a5878; color: #7a9ab8; }
-				#hold-btn.holding {
-					border-color: #8ab4d8; color: #c8e4f8;
-					box-shadow: 0 0 40px rgba(80,130,190,0.25), 0 0 80px rgba(60,110,170,0.1);
-				}
+				#stop-btn:hover:not(:disabled) { border-color: #5a80a8; color: #b8d4ee; }
+				#stop-btn:disabled { opacity: 0.4; cursor: default; }
 
 				.reset-link {
 					background: none; border: none; color: #1e3048; font-family: inherit;
@@ -184,27 +163,21 @@ templ Page() {
 					<input id="question-input" type="text" placeholder="ASK A QUESTION" autocomplete="off" spellcheck="false"/>
 					<button id="ask-btn">TRANSMIT</button>
 				</div>
-				<div id="receive-ui">
+				<div id="scan-ui">
 					<div id="question-text" class="question-display"></div>
-					<div
-						id="meta"
-						hx-get="/fragment/now"
-						hx-trigger="every 4s"
-						hx-swap="innerHTML"
-					></div>
+					<div id="clip-list"></div>
 					<div class="controls">
-						<div id="status"><span class="dot">◌</span>&nbsp;READY</div>
-						<button id="hold-btn">HOLD TO RECEIVE</button>
+						<div id="status"><span class="dot">◌</span>&nbsp;SCANNING</div>
+						<button id="stop-btn">STOP</button>
 						<button id="reset-btn" class="reset-link">← NEW QUESTION</button>
 					</div>
 				</div>
 			</div>
-			<audio id="audio" preload="none"></audio>
 			<script>
 				(function () {
 					'use strict';
 
-					// ── TV static ─────────────────────────────────────────────────────────────
+					// ── TV static ──────────────────────────────────────────────────────────────
 					const canvas = document.getElementById('grain');
 					const gctx   = canvas.getContext('2d');
 					let grainTimer = null;
@@ -225,17 +198,17 @@ templ Page() {
 							}
 						}
 						gctx.putImageData(img, 0, 0);
-						grainTimer = setTimeout(() => requestAnimationFrame(drawStatic), 80);
+						grainTimer = setTimeout(function () { requestAnimationFrame(drawStatic); }, 80);
 					}
 
 					function startGrain() { canvas.classList.add('active'); drawStatic(); }
-					function stopGrain()  {
+					function stopGrain() {
 						canvas.classList.remove('active');
 						clearTimeout(grainTimer); grainTimer = null;
 						gctx.clearRect(0, 0, canvas.width, canvas.height);
 					}
 
-					// ── Year display — erratic jumps ──────────────────────────────────────────
+					// ── Year display ──────────────────────────────────────────────────────────
 					const yearEl = document.getElementById('year-display');
 					let yearTimer  = null;
 					let lockedYear = null;
@@ -257,60 +230,107 @@ templ Page() {
 						clearTimeout(lockTimer); lockTimer = null;
 						lockedYear = null;
 						yearEl.classList.remove('locked');
-						// leave yearEl.textContent showing last year
 					}
 
-					function resetYear() {
-						pauseYear();
-						yearEl.textContent = '——';
-					}
+					function resetYear() { pauseYear(); yearEl.textContent = '——'; }
 
 					function lockYear(year) {
-						if (!year) return;
-						lockedYear = year;
+						const y = parseInt(year, 10);
+						if (!y) return;
+						lockedYear = y;
 						yearEl.classList.add('locked');
 						clearTimeout(lockTimer);
-						lockTimer = setTimeout(() => {
+						lockTimer = setTimeout(function () {
 							lockedYear = null;
 							yearEl.classList.remove('locked');
 						}, 5000);
 					}
 
-					// ── HTMX metadata swap ────────────────────────────────────────────────────
-					const metaEl  = document.getElementById('meta');
-					let receiving = false;
+					// ── Radio sweep noise ──────────────────────────────────────────────────────
+					let sweepAC = null;
 
-					document.body.addEventListener('htmx:afterSwap', function (e) {
-						if (e.detail.target.id !== 'meta') return;
-						const inner = metaEl.querySelector('[data-year]');
-						if (receiving && inner) {
-							metaEl.classList.add('visible');
-							const y = parseInt(inner.dataset.year, 10);
-							if (y) lockYear(y);
-						} else {
-							metaEl.classList.remove('visible');
+					function startSweep() {
+						if (sweepAC) return;
+						try { sweepAC = new (window.AudioContext || window.webkitAudioContext)(); }
+						catch (e) { return; }
+
+						const bufSize = sweepAC.sampleRate;
+						const noiseBuf = sweepAC.createBuffer(1, bufSize, sweepAC.sampleRate);
+						const nd = noiseBuf.getChannelData(0);
+						for (let i = 0; i < bufSize; i++) nd[i] = Math.random() * 2 - 1;
+
+						const src = sweepAC.createBufferSource();
+						src.buffer = noiseBuf;
+						src.loop = true;
+						src.start();
+
+						const bp = sweepAC.createBiquadFilter();
+						bp.type = 'bandpass';
+						bp.Q.value = 14;
+						bp.frequency.value = 1000;
+
+						const vol = sweepAC.createGain();
+						vol.gain.setValueAtTime(0, sweepAC.currentTime);
+						vol.gain.linearRampToValueAtTime(0.13, sweepAC.currentTime + 0.4);
+
+						src.connect(bp);
+						bp.connect(vol);
+						vol.connect(sweepAC.destination);
+						sweepAC._nodes = { src, bp, vol };
+
+						(function tick() {
+							if (!sweepAC) return;
+							const t   = sweepAC.currentTime;
+							const dur = 0.04 + Math.random() * 0.18;
+							bp.frequency.cancelScheduledValues(t);
+							bp.frequency.setValueAtTime(100 + Math.random() * 2900, t);
+							bp.frequency.linearRampToValueAtTime(100 + Math.random() * 2900, t + dur);
+							setTimeout(tick, dur * 1000);
+						})();
+					}
+
+					function stopSweep() {
+						if (!sweepAC) return;
+						const ac = sweepAC; sweepAC = null;
+						const v = ac._nodes && ac._nodes.vol;
+						if (v) {
+							v.gain.cancelScheduledValues(ac.currentTime);
+							v.gain.setValueAtTime(v.gain.value, ac.currentTime);
+							v.gain.linearRampToValueAtTime(0, ac.currentTime + 0.3);
 						}
-					});
+						setTimeout(function () { ac.close(); }, 400);
+					}
 
 					// ── Elements ──────────────────────────────────────────────────────────────
 					const askForm       = document.getElementById('ask-form');
 					const questionInput = document.getElementById('question-input');
 					const askBtn        = document.getElementById('ask-btn');
-					const receiveUI     = document.getElementById('receive-ui');
+					const scanUI        = document.getElementById('scan-ui');
 					const questionText  = document.getElementById('question-text');
-					const status        = document.getElementById('status');
-					const holdBtn       = document.getElementById('hold-btn');
+					const clipListEl    = document.getElementById('clip-list');
+					const statusEl      = document.getElementById('status');
+					const stopBtn       = document.getElementById('stop-btn');
 					const resetBtn      = document.getElementById('reset-btn');
 					const titleEl       = document.getElementById('title');
-					const audio         = document.getElementById('audio');
 
-					// ── Question submit ───────────────────────────────────────────────────────
+					let sessionId   = null;
+					let evtSrc      = null;
+					let playQueue   = [];
+					let isPlaying   = false;
+					const clipAudio = new Audio();
+
+					// ── Question submit ────────────────────────────────────────────────────────
 					function submitQuestion() {
 						const q = questionInput.value.trim().toUpperCase();
 						if (!q) return;
 						questionText.textContent = '> ' + q;
 						askForm.style.display = 'none';
-						receiveUI.classList.add('visible');
+						scanUI.classList.add('visible');
+
+						fetch('/session', { method: 'POST' })
+							.then(function (r) { return r.json(); })
+							.then(function (d) { sessionId = d.id; beginScanning(); })
+							.catch(function () { statusEl.textContent = 'CONNECTION ERROR'; });
 					}
 
 					askBtn.addEventListener('click', submitQuestion);
@@ -318,67 +338,133 @@ templ Page() {
 						if (e.key === 'Enter') submitQuestion();
 					});
 
-					// ── Hold to receive ───────────────────────────────────────────────────────
-					function startReceiving() {
-						if (receiving) return;
-						receiving = true;
-						holdBtn.classList.add('holding');
+					// ── Scanning ──────────────────────────────────────────────────────────────
+					function beginScanning() {
 						titleEl.classList.add('receiving');
-						status.className = 'receiving';
-						status.innerHTML = '<span class="dot">◌</span>&nbsp;RECEIVING';
+						statusEl.className = 'scanning';
+						statusEl.innerHTML = '<span class="dot">◌</span>&nbsp;SCANNING';
+						stopBtn.disabled = false;
+						stopBtn.textContent = 'STOP';
 						startGrain();
 						startYear();
-						audio.src = '/response';
-						audio.play().catch(function () {});
+						startSweep();
+
+						evtSrc = new EventSource('/session/' + sessionId + '/events');
+
+						evtSrc.addEventListener('clip', function (e) {
+							const clip = JSON.parse(e.data);
+							addClipToList(clip);
+							playQueue.push(clip.index);
+							if (!isPlaying) playNext();
+						});
+
+						evtSrc.addEventListener('done', function () {
+							if (evtSrc) { evtSrc.close(); evtSrc = null; }
+							onScanComplete();
+						});
+
+						evtSrc.onerror = function () {
+							if (evtSrc) { evtSrc.close(); evtSrc = null; }
+						};
 					}
 
-					function stopReceiving() {
-						if (!receiving) return;
-						receiving = false;
-						holdBtn.classList.remove('holding');
+					function addClipToList(clip) {
+						const item = document.createElement('div');
+						item.className = 'clip-item';
+						item.id = 'clip-' + clip.index;
+
+						const year = document.createElement('span');
+						year.className = 'clip-year';
+						year.textContent = clip.year || '????';
+
+						const title = document.createElement('span');
+						title.className = 'clip-title';
+						title.textContent = clip.title || clip.identifier;
+
+						const btn = document.createElement('button');
+						btn.className = 'clip-play';
+						btn.textContent = '\u25B6';
+						btn.addEventListener('click', function () { playClip(clip.index); });
+
+						item.append(year, title, btn);
+						clipListEl.appendChild(item);
+					}
+
+					function playNext() {
+						if (playQueue.length === 0) { isPlaying = false; return; }
+						isPlaying = true;
+						playClip(playQueue.shift());
+					}
+
+					function playClip(idx) {
+						if (!sessionId) return;
+						document.querySelectorAll('.clip-item.playing').forEach(function (el) { el.classList.remove('playing'); });
+						const item = document.getElementById('clip-' + idx);
+						if (item) {
+							item.classList.add('playing');
+							const y = item.querySelector('.clip-year');
+							if (y) lockYear(y.textContent);
+						}
+						clipAudio.pause();
+						clipAudio.src = '/clip/' + sessionId + '/' + idx;
+						clipAudio.onended = function () {
+							if (item) item.classList.remove('playing');
+							isPlaying = false;
+							playNext();
+						};
+						clipAudio.onerror = function () {
+							if (item) item.classList.remove('playing');
+							isPlaying = false;
+							playNext();
+						};
+						clipAudio.play().catch(function () {});
+					}
+
+					function onScanComplete() {
 						titleEl.classList.remove('receiving');
-						status.className = '';
-						status.innerHTML = '<span class="dot">◌</span>&nbsp;READY';
+						statusEl.className = '';
+						statusEl.innerHTML = '<span class="dot">\u2713</span>&nbsp;5 RECEIVED';
+						stopSweep();
 						stopGrain();
-						metaEl.classList.remove('visible');
-						audio.pause();
-						audio.src = '';
-						pauseYear();
+						stopBtn.textContent = 'DONE';
+						stopBtn.disabled = true;
 					}
 
-					holdBtn.addEventListener('mousedown', startReceiving);
-					holdBtn.addEventListener('touchstart', function (e) {
-						e.preventDefault();
-						startReceiving();
-					}, { passive: false });
-					holdBtn.addEventListener('mouseup', stopReceiving);
-					holdBtn.addEventListener('touchend', stopReceiving);
-					holdBtn.addEventListener('mouseleave', stopReceiving);
+					// ── Stop / Reset ───────────────────────────────────────────────────────────
+					function stopSession() {
+						if (evtSrc) { evtSrc.close(); evtSrc = null; }
+						clipAudio.pause();
+						clipAudio.src = '';
+						isPlaying = false;
+						playQueue = [];
+						if (sessionId) {
+							fetch('/session/' + sessionId, { method: 'DELETE' }).catch(function () {});
+						}
+						titleEl.classList.remove('receiving');
+						statusEl.className = '';
+						statusEl.innerHTML = '<span class="dot">◌</span>&nbsp;STOPPED';
+						stopSweep();
+						stopGrain();
+						pauseYear();
+						document.querySelectorAll('.clip-item.playing').forEach(function (el) { el.classList.remove('playing'); });
+					}
 
-					audio.addEventListener('ended', stopReceiving);
-					audio.addEventListener('error', stopReceiving);
-
-					// ── Reset ─────────────────────────────────────────────────────────────────
-					resetBtn.addEventListener('click', function () {
-						stopReceiving();
-						receiveUI.classList.remove('visible');
+					function reset() {
+						stopSession();
+						sessionId = null;
+						stopBtn.disabled = false;
+						stopBtn.textContent = 'STOP';
+						scanUI.classList.remove('visible');
 						askForm.style.display = '';
 						questionInput.value = '';
+						clipListEl.innerHTML = '';
 						resetYear();
-						metaEl.classList.remove('visible');
-					});
+					}
+
+					stopBtn.addEventListener('click', stopSession);
+					resetBtn.addEventListener('click', reset);
 				})();
 			</script>
 		</body>
 	</html>
-}
-
-// NowFragment is the HTMX partial — swapped into #meta every 4 s.
-templ NowFragment(np NowPlaying) {
-	if np.Identifier != "" {
-		<div data-year={ strconv.Itoa(np.Year) }>
-			<div class="meta-title">{ np.Title }</div>
-			<a class="meta-link" href={ templ.SafeURL(np.ArchiveURL) } target="_blank" rel="noopener">{ np.Identifier }</a>
-		</div>
-	}
 }

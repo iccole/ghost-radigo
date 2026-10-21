@@ -6,24 +6,22 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
+	"strconv"
 
 	"github.com/a-h/templ"
-	"github.com/isaiah/ghost-radigo/internal/pool"
+	"github.com/isaiah/ghost-radigo/internal/session"
 	"github.com/isaiah/ghost-radigo/internal/server/templates"
 )
 
-// Server exposes the HTTP endpoints and streams on-demand audio from the pool.
+// Server exposes the HTTP endpoints.
 type Server struct {
-	clips      *pool.Pool
-	srv        *http.Server
-	mu         sync.RWMutex
-	nowPlaying templates.NowPlaying
+	sessions *session.Manager
+	srv      *http.Server
 }
 
-// New creates a Server that listens on addr and streams clips from the pool.
-func New(addr string, clips *pool.Pool) *Server {
-	s := &Server{clips: clips}
+// New creates a Server that listens on addr and streams clips via sessions.
+func New(addr string, sessions *session.Manager) *Server {
+	s := &Server{sessions: sessions}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -33,37 +31,13 @@ func New(addr string, clips *pool.Pool) *Server {
 		}
 		templ.Handler(templates.Page()).ServeHTTP(w, r)
 	})
-	mux.HandleFunc("/fragment/now", func(w http.ResponseWriter, r *http.Request) {
-		s.mu.RLock()
-		np := s.nowPlaying
-		s.mu.RUnlock()
-		templ.Handler(templates.NowFragment(np)).ServeHTTP(w, r)
-	})
-	mux.HandleFunc("/now", func(w http.ResponseWriter, r *http.Request) {
-		s.mu.RLock()
-		np := s.nowPlaying
-		s.mu.RUnlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		json.NewEncoder(w).Encode(np) //nolint:errcheck
-	})
-	mux.HandleFunc("/response", s.handleResponse)
+	mux.HandleFunc("POST /session", s.handleCreateSession)
+	mux.HandleFunc("GET /session/{id}/events", s.handleSessionEvents)
+	mux.HandleFunc("GET /clip/{id}/{n}", s.handleClip)
+	mux.HandleFunc("DELETE /session/{id}", s.handleStopSession)
 
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	return s
-}
-
-// UpdateNowPlaying records the clip currently being streamed.
-// Safe to call from any goroutine.
-func (s *Server) UpdateNowPlaying(identifier, title string, year int) {
-	s.mu.Lock()
-	s.nowPlaying = templates.NowPlaying{
-		Identifier: identifier,
-		Title:      title,
-		Year:       year,
-		ArchiveURL: fmt.Sprintf("https://archive.org/details/%s", identifier),
-	}
-	s.mu.Unlock()
 }
 
 // Run starts the HTTP server. It blocks until ctx is cancelled.
@@ -82,34 +56,96 @@ func (s *Server) Run(ctx context.Context) error {
 	return nil
 }
 
-// handleResponse streams pre-encoded clips from the pool until the client
-// disconnects (button released). Each non-silence clip updates nowPlaying
-// so the HTMX metadata poll can surface it.
-func (s *Server) handleResponse(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "audio/mpeg")
-	w.Header().Set("Cache-Control", "no-cache, no-store")
+func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessions.Create()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"id": sess.ID}) //nolint:errcheck
+}
+
+func (s *Server) handleStopSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if sess, ok := s.sessions.Get(id); ok {
+		sess.Stop()
+		s.sessions.Remove(id)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.sessions.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	flusher, canFlush := w.(http.Flusher)
-	ch := s.clips.C()
+	flusher, _ := w.(http.Flusher)
+	flush := func() {
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
 
+	sent := 0
 	for {
 		select {
-		case clip, ok := <-ch:
-			if !ok {
+		case <-sess.Notify:
+			count := sess.Count()
+			for sent < count {
+				clip, ok := sess.Clip(sent)
+				if !ok {
+					break
+				}
+				data, _ := json.Marshal(map[string]any{
+					"index":      clip.Index,
+					"identifier": clip.Identifier,
+					"title":      clip.Title,
+					"year":       clip.Year,
+				})
+				fmt.Fprintf(w, "event: clip\ndata: %s\n\n", data)
+				flush()
+				sent++
+			}
+			if sent >= session.MinClips {
+				sess.Stop()
+				fmt.Fprint(w, "event: done\ndata: {}\n\n")
+				flush()
 				return
 			}
-			if _, err := w.Write(clip.Data); err != nil {
-				return
-			}
-			if canFlush {
-				flusher.Flush()
-			}
-			if !clip.Silence {
-				s.UpdateNowPlaying(clip.Identifier, clip.Title, clip.Year)
-			}
+		case <-sess.Done:
+			fmt.Fprint(w, "event: done\ndata: {}\n\n")
+			flush()
+			return
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+func (s *Server) handleClip(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil {
+		http.Error(w, "bad clip index", http.StatusBadRequest)
+		return
+	}
+	sess, ok := s.sessions.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	clip, ok := sess.Clip(n)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/mpeg")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.Itoa(len(clip.Data)))
+	w.Write(clip.Data) //nolint:errcheck
 }
