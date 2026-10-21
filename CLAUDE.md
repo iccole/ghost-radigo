@@ -56,7 +56,7 @@ Every stage exposes `Run(ctx context.Context) error` and is started from `cmd/st
 
 **Scanner** (`internal/scanner/`) — the "dial"
 - Holds `currentYear` (1900–1980) doing a random walk: small drifts (≤3 yrs) with occasional large jumps (≤15 yrs, 10%).
-- Picks items weighted by proximity to `currentYear` (unknown year = low but nonzero weight).
+- Drops items dated outside 1900–1980 on intake; picks the rest weighted by proximity to `currentYear` (unknown year = low but nonzero weight).
 - Emits `ClipJob`s of 0.1–2.0 s fragments; ~15% are `Silence` jobs (0.3–1.5 s noise gaps). Offsets are capped at 15 min into a file.
 - Seeded `math/rand` — seed comes from `main.go` (0 = time-derived).
 

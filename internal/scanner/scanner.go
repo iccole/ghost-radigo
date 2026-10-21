@@ -82,11 +82,11 @@ func (s *Scanner) Run(ctx context.Context) error {
 		// Fill the local buffer from the fetcher channel without blocking.
 		s.drainFetcher()
 
-		// If buffer is empty, block until at least one item arrives.
-		if len(s.buf) == 0 {
+		// If buffer is empty, block until at least one usable item arrives.
+		for len(s.buf) == 0 {
 			select {
 			case item := <-s.in:
-				s.buf = append(s.buf, item)
+				s.accept(item)
 			case <-ctx.Done():
 				return nil
 			}
@@ -117,11 +117,21 @@ func (s *Scanner) drainFetcher() {
 	for len(s.buf) < bufferSize {
 		select {
 		case item := <-s.in:
-			s.buf = append(s.buf, item)
+			s.accept(item)
 		default:
 			return
 		}
 	}
+}
+
+// accept adds item to the buffer unless its year falls outside the dial's
+// range. Items with an unknown year (0) are kept — many genuinely old
+// recordings have no date metadata.
+func (s *Scanner) accept(item fetcher.MediaItem) {
+	if item.Year != 0 && (float64(item.Year) < yearMin || float64(item.Year) > yearMax) {
+		return
+	}
+	s.buf = append(s.buf, item)
 }
 
 // pickItemIndex returns the index of the selected item using a weighted random

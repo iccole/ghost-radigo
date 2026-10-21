@@ -55,12 +55,13 @@ var searchQueries = []string{
 	`collection:opensource_audio`,
 	`collection:audio_bookspoetry`,
 
-	// Speech-forward subject searches
-	`mediatype:audio subject:"spoken word"`,
-	`mediatype:audio subject:"field recording"`,
-	`mediatype:audio subject:speech`,
-	`mediatype:audio subject:lecture`,
-	`mediatype:audio subject:interview`,
+	// Speech-forward subject searches. Year-bounded so modern uploads
+	// (e.g. radio aporee field recordings) don't crowd out the dial's era.
+	`mediatype:audio subject:"spoken word" year:[1900 TO 1980]`,
+	`mediatype:audio subject:"field recording" year:[1900 TO 1980]`,
+	`mediatype:audio subject:speech year:[1900 TO 1980]`,
+	`mediatype:audio subject:lecture year:[1900 TO 1980]`,
+	`mediatype:audio subject:interview year:[1900 TO 1980]`,
 	`mediatype:audio subject:comedy year:[1930 TO 1980]`,
 	`mediatype:audio subject:news year:[1930 TO 1980]`,
 	`mediatype:audio subject:gospel year:[1930 TO 1970]`,
