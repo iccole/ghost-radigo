@@ -81,7 +81,9 @@ func vadScore(ctx context.Context, url string, offset, dur float64) (float64, er
 
 	m := reMeanVol.FindSubmatch(stderr.Bytes())
 	if m == nil {
-		return 0, fmt.Errorf("vad: volumedetect output not found in ffmpeg stderr")
+		// No audio at this offset (likely seeked past EOF). Return score 0
+		// so the threshold rejects cleanly without triggering fail-open.
+		return 0, nil
 	}
 
 	db, err := strconv.ParseFloat(string(m[1]), 64)

@@ -17,8 +17,9 @@ import (
 
 const (
 	// Maximum time to wait for a single ffmpeg invocation.
-	// Remote sources can be slow; give ample headroom.
-	processorTimeout = 2 * time.Minute
+	// 45 s is enough for well-behaved archive sources; anything slower is
+	// likely a large-file range-seek that will never complete usefully.
+	processorTimeout = 45 * time.Second
 
 	// Output encoding parameters — must match across all workers so the
 	// stream stays consistent for the mixer.

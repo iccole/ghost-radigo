@@ -141,11 +141,19 @@ func (s *Scanner) pickItemIndex() int {
 // pickOffset returns a random start offset that leaves at least dur seconds
 // remaining in the item.
 func (s *Scanner) pickOffset(item fetcher.MediaItem, dur float64) float64 {
+	const maxFileOffset = 900.0 // cap at 15 min to avoid timeout kills on long files
+
 	if item.Duration <= 0 || item.Duration <= dur {
-		// Unknown or short duration: pick within first 5 minutes.
-		return s.rng.Float64() * 300
+		// Unknown or short duration: pick within first 60 s.
+		// 300 s caused frequent past-EOF seeks on short items (78 rpm records
+		// are typically 3–4 min; many archive items report Duration=0).
+		return s.rng.Float64() * 60
 	}
-	return s.rng.Float64() * (item.Duration - dur)
+	upper := item.Duration - dur
+	if upper > maxFileOffset {
+		upper = maxFileOffset
+	}
+	return s.rng.Float64() * upper
 }
 
 // drift advances currentYear by a random walk, with occasional larger jumps.

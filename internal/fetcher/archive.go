@@ -47,9 +47,11 @@ var preferredFormats = []string{
 // The base query in search() appends NOT access-restricted:1 to every entry.
 var searchQueries = []string{
 	// Spoken-word audio collections
+	// NOTE: collection:radio is intentionally excluded — it contains modern
+	// 1-hour broadcast recordings (BBC, BFBS, NPR) whose large file sizes
+	// cause ffmpeg range-seek timeouts that starve the clip pool.
 	`collection:oldtimeradio`,
 	`collection:librivox`,
-	`collection:radio`,
 	`collection:opensource_audio`,
 	`collection:audio_bookspoetry`,
 
