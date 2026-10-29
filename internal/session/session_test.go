@@ -3,8 +3,10 @@ package session
 import (
 	mathrand "math/rand"
 	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/isaiah/ghost-radigo/internal/grammar"
 	"github.com/isaiah/ghost-radigo/internal/processor"
 )
 
@@ -22,6 +24,16 @@ func testSession(target float64) *Session {
 
 func piece(name, id string, role processor.Role) frag {
 	return frag{data: []byte(name), duration: 1, role: role, identifier: id}
+}
+
+// spoken returns a transcribed piece tagged from its first and last words.
+func spoken(text, id string, role processor.Role) frag {
+	f := piece(text, id, role)
+	words := strings.Fields(text)
+	f.text = text
+	f.first = grammar.Of(words[0])
+	f.last = grammar.Of(words[len(words)-1])
+	return f
 }
 
 func composite(t *testing.T, s *Session, n int) string {
@@ -116,5 +128,74 @@ func TestPoolCap(t *testing.T) {
 	// is fixed.
 	if n := len(s.pools[processor.RoleEnding]); n > poolCap {
 		t.Errorf("ending pool holds %d, want at most %d", n, poolCap)
+	}
+}
+
+func TestTakeRespectsGrammar(t *testing.T) {
+	s := testSession(100)
+	s.lastTag = grammar.Of("the")
+	s.pools[processor.RoleMiddle] = []frag{
+		spoken("went down to", "a", processor.RoleMiddle),
+		spoken("ferry boat from", "b", processor.RoleMiddle),
+	}
+	f, ok := s.take(processor.RoleMiddle)
+	if !ok || f.text != "ferry boat from" {
+		t.Fatalf("took %q after \"the\", want \"ferry boat from\"", f.text)
+	}
+	if f, ok := s.take(processor.RoleMiddle); ok {
+		t.Errorf("took %q after \"the\"; a verb can't follow a determiner", f.text)
+	}
+}
+
+func TestTakePrefersTranscribed(t *testing.T) {
+	s := testSession(100)
+	s.pools[processor.RoleOpening] = []frag{
+		piece("hiss", "a", processor.RoleOpening),
+		spoken("Do you know", "b", processor.RoleOpening),
+	}
+	if f, _ := s.take(processor.RoleOpening); f.text != "Do you know" {
+		t.Errorf("took %q, want the transcribed piece", f.data)
+	}
+}
+
+func TestFullPoolOverridesGrammar(t *testing.T) {
+	s := testSession(100)
+	s.ingest(spoken("look at the", "o", processor.RoleOpening))
+	// Only verbs arrive for the middle slot after "the"; once their pool
+	// fills, one stands in rather than stalling the session.
+	for i := 0; i < poolCap; i++ {
+		s.ingest(spoken("went away", "m", processor.RoleMiddle))
+	}
+	if len(s.buf) < 2 {
+		t.Fatal("assembly stalled on a full pool of ungrammatical pieces")
+	}
+}
+
+func TestTranscript(t *testing.T) {
+	s := testSession(100)
+	s.ingest(spoken("Do you know", "a", processor.RoleOpening))
+	s.middlesLeft = 1
+	s.ingest(piece("hiss", "b", processor.RoleMiddle))
+	s.ingest(spoken("the river?", "c", processor.RoleEnding))
+	s.ingest(spoken("Yes.", "d", processor.RoleWhole))
+	want := `"Do you know" … "the river?" / "Yes."`
+	if got := s.transcript(); got != want {
+		t.Errorf("transcript = %s, want %s", got, want)
+	}
+}
+
+func TestFallbackRelaxesRoleBeforeGrammar(t *testing.T) {
+	s := testSession(100)
+	s.lastTag = grammar.Of("the")
+	s.pools[processor.RoleEnding] = []frag{spoken("old boat.", "e", processor.RoleEnding)}
+	for i := 0; i < poolCap; i++ {
+		s.pools[processor.RoleMiddle] = append(s.pools[processor.RoleMiddle],
+			spoken("went away", "m", processor.RoleMiddle))
+	}
+	if f, _ := s.takeAny(); f.text != "old boat." {
+		t.Errorf("fallback took %q, want the grammatical piece from another role", f.text)
+	}
+	if f, _ := s.takeAny(); f.text != "went away" {
+		t.Errorf("fallback took %q, want an ungrammatical piece once nothing fits", f.text)
 	}
 }
