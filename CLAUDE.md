@@ -32,7 +32,7 @@ templ generate
 docker compose up --build
 ```
 
-**External dependency:** `ffmpeg` must be installed and on `$PATH`.
+**External dependencies:** `ffmpeg` must be installed and on `$PATH`. Transcription is optional: it needs whisper.cpp's `whisper-cli` on `$PATH` and `GHOST_RADIO_WHISPER_MODEL` pointing at a ggml model (`base.en` recommended; the Docker image bundles both). Without them the station logs "transcription off" and joins pieces by pause roles only.
 
 `internal/server/templates/templates_templ.go` is generated but committed, so the project builds without the `templ` CLI. Always regenerate it after editing `templates.templ` — never hand-edit the generated file.
 
@@ -41,7 +41,7 @@ docker compose up --build
 A linear chain of long-running goroutines connected by buffered channels (backpressure is implicit):
 
 ```
-Fetcher → Scanner → Processor pool → Session manager → HTTP (SSE + clip bytes)
+Fetcher → Scanner → Processor pool (+ Transcriber) → Session manager → HTTP (SSE + clip bytes)
 ```
 
 Every stage exposes `Run(ctx context.Context) error` and is started from `cmd/station/main.go`, which owns the channels and shuts everything down via `signal.NotifyContext`.
@@ -68,9 +68,17 @@ Every stage exposes `Run(ctx context.Context) error` and is started from `cmd/st
   - **Pause detection** — threshold is relative to the window's own 10th/95th percentile levels (fixed dB thresholds fail on hissy archive audio); runs ≥ 100 ms are pauses. Pieces are the 0.2–2.0 s spans bounded by pauses on both sides, padded 40 ms into each pause.
   - **Roles** — a pause ≥ 400 ms before a piece makes it an `opening`, after it an `ending` (falling sentence pitch), both a `whole` phrase, neither a `middle`.
   - Thresholds were calibrated by hand on OTR, LibriVox, comedy LPs and 78rpm dance/jazz; the numbers are in the constant comments.
-- At most `maxPiecesPerWindow` (2) random pieces per window, so composites mix many recordings. Pieces get 15/30 ms anti-click fades, MP3 128k/44.1k stereo; ~5% are `areverse`d for an EVP effect (which swaps opening ↔ ending).
+- Transcription (`words.go`): if a `Transcriber` is set, ffmpeg converts the window to 16 kHz WAV and `whisper-cli` returns timed words. `annotate` gives each piece the words whose midpoint it contains — if they're confident (mean ≥ 0.5) and not Whisper non-speech markers (`♪`, `(…)`, `[…]`) — plus `grammar` tags of its first/last word, and re-derives its role: opening = after `.?!` or capitalised; ending = ends in `.?!`, or pause-based ending whose last word `grammar.CanEnd`. Failures are logged and pieces keep pause roles.
+- Up to `maxPiecesPerWindow` (4) random pieces per window, transcribed ones first. Pieces get 15/30 ms anti-click fades, MP3 128k/44.1k stereo; ~5% are `areverse`d for an EVP effect (which swaps opening ↔ ending).
 - `EncodeSilence` produces the digital-silence gaps that `main.go` pre-encodes at startup for the session.
 - Silence jobs become quiet pink noise via ffmpeg `anoisesrc`.
+
+**Transcriber** (`internal/transcribe/`)
+- Wraps `whisper-cli` (`-ml 1 -sow -ojf`: one JSON segment per word). CPU only (`-ng`), 2 threads, at most 4 concurrent calls (semaphore). Word confidence = lowest probability of its lexical tokens (punctuation tokens are ignored — they score low on clear words).
+- Nil-safe like the cache: a nil `*Transcriber` returns no words.
+
+**Grammar** (`internal/grammar/`)
+- `Of(word)` returns a bit-set `Tag` of possible parts of speech (closed-class lexicon + common irregular verbs/adjectives + suffix rules). `CanFollow(prev, next)` checks a junction against the `follows` table; zero (unknown) tags fit anywhere. Intentionally small: only the words either side of a junction matter.
 - Outputs `ProcessedClip` (MP3 bytes + metadata).
 
 **Cache** (`internal/cache/`)
@@ -81,9 +89,11 @@ Every stage exposes `Run(ctx context.Context) error` and is started from `cmd/st
 **Session manager** (`internal/session/`)
 - Sole consumer of processor output. Drops silence clips and fans each piece out to every active session.
 - Each `Session` pools pieces by role (≤ `poolCap` each, oldest dropped) and assembles phrases: opening → 1–3 middles → ending, or a single whole piece. Word gaps (60–150 ms) go inside a phrase, phrase gaps (300–600 ms) between phrases; both are pre-encoded MP3 silences passed in as `Gaps`.
-- Pieces from a different recording than the last one placed are preferred, so sources interleave. When any pool is full, any piece may stand in for the needed role (continuity over accuracy).
+- Candidates must satisfy `grammar.CanFollow(lastTag, first)`; among those, `score` prefers transcribed (+4), a different recording than the last piece (+2), and 3+ words (+1). `lastTag` resets to 0 at each phrase end.
+- When any pool is full, `takeAny` relaxes the role first (best grammatical piece of any role), then grammar (fullest pool) — continuity over accuracy.
+- Each published composite is logged with its transcript (`"text"`, `…` untranscribed, `/` phrase break) — the quickest way to judge assembly quality.
 - A composite is published when a phrase ends at or past its 7–10 s target; once past the target, a phrase skips its remaining middles. After `MinClips` (5) composites the SSE handler stops the session.
-- Concurrency rule: assembly state (`pools`, `buf`, `bufDur`, `targetDur`, `next`, `middlesLeft`, `lastID`, `rng`) is touched only by the `Manager.Run` goroutine — no lock. `composites` is read by HTTP handlers and guarded by `mu`.
+- Concurrency rule: assembly state (`pools`, `buf`, `bufDur`, `targetDur`, `next`, `middlesLeft`, `lastID`, `lastTag`, `rng`) is touched only by the `Manager.Run` goroutine — no lock. `composites` is read by HTTP handlers and guarded by `mu`.
 
 **Server** (`internal/server/`)
 - Standard `net/http` with Go 1.22 method/pattern routing; UI rendered with templ (`templates/`).
@@ -106,10 +116,10 @@ The front end (inline JS in `templates.templ`) handles the question form, plays 
 
 ### Design rules
 
-- **ffmpeg does all audio work** — never decode/encode audio in-process in Go. Concatenating already-encoded MP3 byte slices (session composites, including the silence gaps) is the only byte-level manipulation.
+- **ffmpeg does all audio work** — never decode/encode audio in-process in Go. `whisper-cli` only analyses (it reads the WAV ffmpeg produced). Concatenating already-encoded MP3 byte slices (session composites, including the silence gaps) is the only byte-level manipulation.
 - **Continuity over accuracy** — prefer keeping sound flowing over perfect filtering. Exception: windows that fail the speech check or analysis are skipped, since pieces can't be cut without an envelope.
 - **Stateful station, anonymous listeners** — sessions are ephemeral, in-memory, identified only by a random ID.
-- **No external services** beyond archive.org — no database, no Redis.
+- **No external services** beyond archive.org — no database, no Redis. Transcription runs locally.
 - Every goroutine must exit on `ctx.Done()`; every ffmpeg call must have a timeout context.
 
 ## Internet Archive API
