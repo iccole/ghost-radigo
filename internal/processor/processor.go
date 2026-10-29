@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/isaiah/ghost-radigo/internal/cache"
+	"github.com/isaiah/ghost-radigo/internal/grammar"
 	"github.com/isaiah/ghost-radigo/internal/logger"
 	"github.com/isaiah/ghost-radigo/internal/scanner"
+	"github.com/isaiah/ghost-radigo/internal/transcribe"
 )
 
 const (
@@ -41,9 +43,10 @@ const (
 	// window files are headers with little or no audio (a seek past EOF).
 	minWindowBytes = 24 * 1024
 
-	// maxPiecesPerWindow caps how many pieces one window contributes, so
-	// composites draw on many recordings rather than a few.
-	maxPiecesPerWindow = 2
+	// maxPiecesPerWindow caps how many pieces one window contributes. The
+	// session needs a varied pool to find grammatical joins, and it
+	// interleaves recordings itself, so this can exceed a composite's share.
+	maxPiecesPerWindow = 4
 
 	// Anti-click fades on each piece (seconds).
 	pieceFadeIn  = 0.015
@@ -62,7 +65,10 @@ type ProcessedClip struct {
 	Duration   float64 // seconds (may be 0 for silence if generation failed)
 	Silence    bool
 	Role       Role   // position in its source phrase; meaningless for silence
-	Identifier string // archive item ID; empty for noise gaps
+	Text       string // transcript; empty when untranscribed
+	First      grammar.Tag
+	Last       grammar.Tag // parts of speech of the first and last words
+	Identifier string      // archive item ID; empty for noise gaps
 	Title      string
 	Year       int
 }
@@ -70,21 +76,23 @@ type ProcessedClip struct {
 // Worker pulls ClipJobs from in, runs ffmpeg, and pushes ProcessedClips to out.
 // A single speech window can yield several ProcessedClips.
 type Worker struct {
-	id    int
-	in    <-chan scanner.ClipJob
-	out   chan<- ProcessedClip
-	rng   *rand.Rand
-	cache *cache.Cache // nil disables caching
+	id          int
+	in          <-chan scanner.ClipJob
+	out         chan<- ProcessedClip
+	rng         *rand.Rand
+	cache       *cache.Cache            // nil disables caching
+	transcriber *transcribe.Transcriber // nil disables transcription
 }
 
 // NewWorker creates a processor worker.
-func NewWorker(id int, in <-chan scanner.ClipJob, out chan<- ProcessedClip, c *cache.Cache) *Worker {
+func NewWorker(id int, in <-chan scanner.ClipJob, out chan<- ProcessedClip, c *cache.Cache, t *transcribe.Transcriber) *Worker {
 	return &Worker{
-		id:    id,
-		in:    in,
-		out:   out,
-		rng:   rand.New(rand.NewSource(time.Now().UnixNano() + int64(id)*1000)),
-		cache: c,
+		id:          id,
+		in:          in,
+		out:         out,
+		rng:         rand.New(rand.NewSource(time.Now().UnixNano() + int64(id)*1000)),
+		cache:       c,
+		transcriber: t,
 	}
 }
 
@@ -157,24 +165,39 @@ func (w *Worker) extractPieces(ctx context.Context, job scanner.ClipJob) ([]Proc
 		return nil, fmt.Errorf("%w (cv=%.2f, no pauses)", errNotSpeech, cv)
 	}
 
+	// Transcription is best-effort: without words, pieces still carry their
+	// pause-based roles and the session falls back to those.
+	words, err := w.transcribeWindow(ctx, path)
+	if err != nil {
+		logger.Warn("transcribe %s: %v", job.Item.Identifier, err)
+	}
+	annotate(pieces, words)
+
 	found := len(pieces)
 	w.rng.Shuffle(len(pieces), func(i, j int) { pieces[i], pieces[j] = pieces[j], pieces[i] })
+	preferTranscribed(pieces)
 	if len(pieces) > maxPiecesPerWindow {
 		pieces = pieces[:maxPiecesPerWindow]
 	}
-	roles := make([]string, len(pieces))
+	desc := make([]string, len(pieces))
 	for i, p := range pieces {
-		roles[i] = p.role.String()
+		desc[i] = p.role.String()
+		if p.text != "" {
+			desc[i] += fmt.Sprintf(" %q", p.text)
+		}
 	}
-	logger.Info("window  %s  year=%d  offset=%.0fs  cv=%.2f  pieces=%d/%d %v  title=%q",
-		job.Item.Identifier, job.Item.Year, job.Offset, cv, len(pieces), found, roles, job.Item.Title)
+	logger.Info("window  %s  year=%d  offset=%.0fs  cv=%.2f  pieces=%d/%d [%s]  title=%q",
+		job.Item.Identifier, job.Item.Year, job.Offset, cv, len(pieces), found,
+		strings.Join(desc, ", "), job.Item.Title)
 
 	clips := make([]ProcessedClip, 0, len(pieces))
 	for _, p := range pieces {
 		reversed := w.rng.Float64() < reversalProb
 		role := p.role
 		if reversed {
+			// Backwards audio has no readable words or grammar.
 			role = role.Reversed()
+			p.text, p.first, p.last = "", 0, 0
 		}
 		data, err := encodePiece(ctx, path, p, reversed)
 		if err != nil {
@@ -187,6 +210,9 @@ func (w *Worker) extractPieces(ctx context.Context, job scanner.ClipJob) ([]Proc
 			Data:       data,
 			Duration:   p.dur(),
 			Role:       role,
+			Text:       p.text,
+			First:      p.first,
+			Last:       p.last,
 			Identifier: job.Item.Identifier,
 			Title:      job.Item.Title,
 			Year:       job.Item.Year,
@@ -376,11 +402,12 @@ type Pool struct {
 	workers []*Worker
 }
 
-// NewPool creates n workers sharing the same input, output, and cache.
-func NewPool(n int, in <-chan scanner.ClipJob, out chan<- ProcessedClip, c *cache.Cache) *Pool {
+// NewPool creates n workers sharing the same input, output, cache and
+// transcriber.
+func NewPool(n int, in <-chan scanner.ClipJob, out chan<- ProcessedClip, c *cache.Cache, t *transcribe.Transcriber) *Pool {
 	workers := make([]*Worker, n)
 	for i := range workers {
-		workers[i] = NewWorker(i, in, out, c)
+		workers[i] = NewWorker(i, in, out, c, t)
 	}
 	return &Pool{workers: workers}
 }

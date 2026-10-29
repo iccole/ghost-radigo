@@ -14,6 +14,7 @@ import (
 	"github.com/isaiah/ghost-radigo/internal/scanner"
 	"github.com/isaiah/ghost-radigo/internal/server"
 	"github.com/isaiah/ghost-radigo/internal/session"
+	"github.com/isaiah/ghost-radigo/internal/transcribe"
 )
 
 const (
@@ -71,10 +72,22 @@ func main() {
 		logger.Info("clip cache: %s", cache.DefaultDir())
 	}
 
+	// Transcription is optional: without it, pieces are stitched by their
+	// pause-based roles alone.
+	var transcriber *transcribe.Transcriber
+	if model := os.Getenv("GHOST_RADIO_WHISPER_MODEL"); model == "" {
+		logger.Info("transcription off: set GHOST_RADIO_WHISPER_MODEL to a whisper.cpp model")
+	} else if t, err := transcribe.New(model); err != nil {
+		logger.Warn("transcription off: %v", err)
+	} else {
+		transcriber = t
+		logger.Info("transcribing with %s", model)
+	}
+
 	// Assemble pipeline.
 	fetch    := fetcher.New(mediaC)
 	scan     := scanner.New(mediaC, jobC, s)
-	procPool := processor.NewPool(processorCount, jobC, clipC, clipCache)
+	procPool := processor.NewPool(processorCount, jobC, clipC, clipCache, transcriber)
 	sessions := session.NewManager(clipC, encodeGaps(ctx))
 	srv      := server.New(addr, sessions)
 

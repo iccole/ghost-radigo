@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/isaiah/ghost-radigo/internal/grammar"
 )
 
 const (
@@ -113,8 +115,10 @@ func (r Role) Reversed() Role {
 
 // span is a region of a window, in seconds from the window start.
 type span struct {
-	start, end float64
-	role       Role
+	start, end  float64
+	role        Role
+	text        string      // transcript; empty when untranscribed or untrusted
+	first, last grammar.Tag // parts of speech of the first and last words
 }
 
 func (s span) dur() float64 { return s.end - s.start }
