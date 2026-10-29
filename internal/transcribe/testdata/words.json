@@ -1,0 +1,94 @@
+{
+ "transcription": [
+  {
+   "offsets": {
+    "from": 0,
+    "to": 30
+   },
+   "text": "",
+   "tokens": [
+    {
+     "text": "[_BEG_]",
+     "p": 0.9637
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 30,
+    "to": 450
+   },
+   "text": " Yes,",
+   "tokens": [
+    {
+     "text": " Yes",
+     "p": 0.2428
+    },
+    {
+     "text": ",",
+     "p": 0.5807
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 450,
+    "to": 900
+   },
+   "text": " yes,",
+   "tokens": [
+    {
+     "text": " yes",
+     "p": 0.5897
+    },
+    {
+     "text": ",",
+     "p": 0.4264
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 900,
+    "to": 990
+   },
+   "text": " I",
+   "tokens": [
+    {
+     "text": " I",
+     "p": 0.8823
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 990,
+    "to": 1170
+   },
+   "text": " am",
+   "tokens": [
+    {
+     "text": " am",
+     "p": 0.9812
+    }
+   ]
+  },
+  {
+   "offsets": {
+    "from": 1170,
+    "to": 1960
+   },
+   "text": " English.",
+   "tokens": [
+    {
+     "text": " English",
+     "p": 0.9224
+    },
+    {
+     "text": ".",
+     "p": 0.4763
+    }
+   ]
+  }
+ ]
+}
