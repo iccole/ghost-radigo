@@ -57,25 +57,33 @@ Every stage exposes `Run(ctx context.Context) error` and is started from `cmd/st
 **Scanner** (`internal/scanner/`) — the "dial"
 - Holds `currentYear` (1900–1980) doing a random walk: small drifts (≤3 yrs) with occasional large jumps (≤15 yrs, 10%).
 - Drops items dated outside 1900–1980 on intake; picks the rest weighted by proximity to `currentYear` (unknown year = low but nonzero weight).
-- Emits `ClipJob`s of 0.1–2.0 s fragments; ~15% are `Silence` jobs (0.3–1.5 s noise gaps). Offsets are capped at 15 min into a file.
+- Emits `ClipJob`s for 12 s analysis windows, offsets snapped to a 5 s grid (matches the cache buckets) and capped at 15 min into a file; ~15% are `Silence` jobs (0.3–1.5 s noise gaps).
 - Seeded `math/rand` — seed comes from `main.go` (0 = time-derived).
 
 **Processor** (`internal/processor/`)
 - `Pool` of N workers (`processorCount = 8` in main), each shelling out to `ffmpeg` with a context timeout.
-- Flow per job: cache lookup → VAD probe (`vad.go`: bandpass + `volumedetect`, rejects near-silence; **fails open** on probe errors) → encode.
-- Encode chain: seek, trim, random 0.3–0.8 s fades, `loudnorm`, highpass 80 Hz / lowpass 8 kHz, MP3 128k/44.1k stereo. ~15% of clips are `areverse`d for an EVP effect.
+- Flow per window job: load window (cache, else one ffmpeg fetch with `loudnorm` + highpass 80 Hz / lowpass 8 kHz into a local temp MP3) → analyse → cut pieces → encode each piece from the local file.
+- Analysis (`analysis.go`): two ffmpeg passes over the local window — 20 ms voice-band RMS (`astats`), and spectral centroid (`aspectralstats`, which re-frames into its own 128 ms windows every 64 ms, so it **must not share a pass** with the RMS chain or the 20 ms grid breaks). Go only reads the numbers:
+  - **Speech check** — coefficient of variation of the spectral centroid over voiced frames must be ≥ `minCentroidCV` (0.22); music holds a steady timbre, speech doesn't. Windows that fail are dropped (`errNotSpeech`).
+  - **Pause detection** — threshold is relative to the window's own 10th/95th percentile levels (fixed dB thresholds fail on hissy archive audio); runs ≥ 100 ms are pauses. Pieces are the 0.2–2.0 s spans bounded by pauses on both sides, padded 40 ms into each pause.
+  - **Roles** — a pause ≥ 400 ms before a piece makes it an `opening`, after it an `ending` (falling sentence pitch), both a `whole` phrase, neither a `middle`.
+  - Thresholds were calibrated by hand on OTR, LibriVox, comedy LPs and 78rpm dance/jazz; the numbers are in the constant comments.
+- At most `maxPiecesPerWindow` (2) random pieces per window, so composites mix many recordings. Pieces get 15/30 ms anti-click fades, MP3 128k/44.1k stereo; ~5% are `areverse`d for an EVP effect (which swaps opening ↔ ending).
+- `EncodeSilence` produces the digital-silence gaps that `main.go` pre-encodes at startup for the session.
 - Silence jobs become quiet pink noise via ffmpeg `anoisesrc`.
 - Outputs `ProcessedClip` (MP3 bytes + metadata).
 
 **Cache** (`internal/cache/`)
-- On-disk MP3 cache keyed by `identifier_{offset bucketed to 5s}_{duration rounded}s.mp3`.
+- On-disk cache of normalised 12 s **windows** (not pieces), keyed by `identifier_{offset bucketed to 5s}_{duration rounded}s.mp3`. A hit skips the network fetch; analysis and piece cutting still run.
 - Location: `$GHOST_RADIO_CACHE_DIR`, else `os.UserCacheDir()/ghost-radio`.
 - Atomic writes (tmp + rename). Methods are nil-safe — a nil `*Cache` means "no cache".
 
 **Session manager** (`internal/session/`)
-- Sole consumer of processor output. Drops silence clips and fans each fragment out to every active session.
-- Each `Session` accumulates fragments into a composite of 7–10 s, then publishes it and signals `Notify`. After `MinClips` (5) composites the SSE handler stops the session.
-- Concurrency rule: accumulation state (`buf`, `bufDur`, `targetDur`, `rng`) is touched only by the `Manager.Run` goroutine — no lock. `composites` is read by HTTP handlers and guarded by `mu`.
+- Sole consumer of processor output. Drops silence clips and fans each piece out to every active session.
+- Each `Session` pools pieces by role (≤ `poolCap` each, oldest dropped) and assembles phrases: opening → 1–3 middles → ending, or a single whole piece. Word gaps (60–150 ms) go inside a phrase, phrase gaps (300–600 ms) between phrases; both are pre-encoded MP3 silences passed in as `Gaps`.
+- Pieces from a different recording than the last one placed are preferred, so sources interleave. When any pool is full, any piece may stand in for the needed role (continuity over accuracy).
+- A composite is published when a phrase ends at or past its 7–10 s target; once past the target, a phrase skips its remaining middles. After `MinClips` (5) composites the SSE handler stops the session.
+- Concurrency rule: assembly state (`pools`, `buf`, `bufDur`, `targetDur`, `next`, `middlesLeft`, `lastID`, `rng`) is touched only by the `Manager.Run` goroutine — no lock. `composites` is read by HTTP handlers and guarded by `mu`.
 
 **Server** (`internal/server/`)
 - Standard `net/http` with Go 1.22 method/pattern routing; UI rendered with templ (`templates/`).
@@ -98,8 +106,8 @@ The front end (inline JS in `templates.templ`) handles the question form, plays 
 
 ### Design rules
 
-- **ffmpeg does all audio work** — never decode/encode audio in-process in Go. Concatenating already-encoded MP3 byte slices (session composites) is the only byte-level manipulation.
-- **Continuity over accuracy** — prefer keeping sound flowing over perfect filtering (e.g. VAD fails open).
+- **ffmpeg does all audio work** — never decode/encode audio in-process in Go. Concatenating already-encoded MP3 byte slices (session composites, including the silence gaps) is the only byte-level manipulation.
+- **Continuity over accuracy** — prefer keeping sound flowing over perfect filtering. Exception: windows that fail the speech check or analysis are skipped, since pieces can't be cut without an envelope.
 - **Stateful station, anonymous listeners** — sessions are ephemeral, in-memory, identified only by a random ID.
 - **No external services** beyond archive.org — no database, no Redis.
 - Every goroutine must exit on `ctx.Done()`; every ffmpeg call must have a timeout context.

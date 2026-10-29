@@ -22,6 +22,31 @@ const (
 	seed           = 0 // 0 = derive from current time
 )
 
+// Gap lengths in seconds. Each encoded MP3 also carries ~50 ms of encoder
+// padding, so the audible pauses run slightly longer.
+var (
+	wordGaps   = []float64{0.06, 0.09, 0.12, 0.15}
+	phraseGaps = []float64{0.30, 0.40, 0.50, 0.60}
+)
+
+// encodeGaps pre-encodes the silences sessions place between pieces. A gap
+// that fails to encode is skipped; with none, pieces simply butt together.
+func encodeGaps(ctx context.Context) session.Gaps {
+	encode := func(durs []float64) []processor.ProcessedClip {
+		var out []processor.ProcessedClip
+		for _, d := range durs {
+			g, err := processor.EncodeSilence(ctx, d)
+			if err != nil {
+				logger.Warn("gap %.2fs: %v", d, err)
+				continue
+			}
+			out = append(out, g)
+		}
+		return out
+	}
+	return session.Gaps{Word: encode(wordGaps), Phrase: encode(phraseGaps)}
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -50,7 +75,7 @@ func main() {
 	fetch    := fetcher.New(mediaC)
 	scan     := scanner.New(mediaC, jobC, s)
 	procPool := processor.NewPool(processorCount, jobC, clipC, clipCache)
-	sessions := session.NewManager(clipC)
+	sessions := session.NewManager(clipC, encodeGaps(ctx))
 	srv      := server.New(addr, sessions)
 
 	// Run all stages concurrently.

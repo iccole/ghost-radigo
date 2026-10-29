@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,35 +18,57 @@ import (
 )
 
 const (
-	// Maximum time to wait for a single ffmpeg invocation.
+	// Maximum time to wait for a window download from the archive.
 	// 45 s is enough for well-behaved archive sources; anything slower is
 	// likely a large-file range-seek that will never complete usefully.
 	processorTimeout = 45 * time.Second
 
-	// Output encoding parameters — must match across all workers so the
-	// stream stays consistent for the mixer.
+	// Piece encodes read a local file, so they should be near-instant.
+	pieceTimeout = 15 * time.Second
+
+	// Output encoding parameters — must match across all workers so session
+	// composites (concatenated MP3 bytes) stay consistent.
 	sampleRate = "44100"
 	channels   = "2"
 	bitrate    = "128k"
 	format     = "mp3"
 
-	// reversalProb is the probability that a clip is time-reversed before
+	// windowBitrate is higher than the output bitrate because pieces are
+	// re-encoded from the window file.
+	windowBitrate = "192k"
+
+	// minWindowBytes is about one second of audio at windowBitrate. Smaller
+	// window files are headers with little or no audio (a seek past EOF).
+	minWindowBytes = 24 * 1024
+
+	// maxPiecesPerWindow caps how many pieces one window contributes, so
+	// composites draw on many recordings rather than a few.
+	maxPiecesPerWindow = 2
+
+	// Anti-click fades on each piece (seconds).
+	pieceFadeIn  = 0.015
+	pieceFadeOut = 0.030
+
+	// reversalProb is the probability that a piece is time-reversed before
 	// playback — an EVP technique that creates disorienting backwards-voice
-	// fragments while preserving the phoneme bed.
-	reversalProb = 0.15
+	// fragments while preserving the phoneme bed. Kept rare: backwards audio
+	// breaks the sentence-like phrasing the session builds.
+	reversalProb = 0.05
 )
 
-// ProcessedClip holds the encoded audio bytes for a single clip.
+// ProcessedClip holds the encoded audio bytes for a single piece (or noise gap).
 type ProcessedClip struct {
 	Data       []byte
 	Duration   float64 // seconds (may be 0 for silence if generation failed)
 	Silence    bool
+	Role       Role   // position in its source phrase; meaningless for silence
 	Identifier string // archive item ID; empty for noise gaps
 	Title      string
 	Year       int
 }
 
 // Worker pulls ClipJobs from in, runs ffmpeg, and pushes ProcessedClips to out.
+// A single speech window can yield several ProcessedClips.
 type Worker struct {
 	id    int
 	in    <-chan scanner.ClipJob
@@ -73,20 +96,22 @@ func (w *Worker) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			clip, err := w.process(ctx, job)
+			clips, err := w.process(ctx, job)
 			if err != nil {
-				if errors.Is(err, errVADReject) {
-					logger.Debug("vad skip  %s  offset=%.1fs", job.Item.Identifier, job.Offset)
+				if errors.Is(err, errNotSpeech) {
+					logger.Debug("skip  %s  offset=%.1fs: %v", job.Item.Identifier, job.Offset, err)
 					continue
 				}
 				logger.Error("processor[%d]: %s offset=%.1fs: %v",
 					w.id, job.Item.Identifier, job.Offset, err)
 				continue
 			}
-			select {
-			case w.out <- clip:
-			case <-ctx.Done():
-				return nil
+			for _, clip := range clips {
+				select {
+				case w.out <- clip:
+				case <-ctx.Done():
+					return nil
+				}
 			}
 		case <-ctx.Done():
 			return nil
@@ -94,78 +119,161 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-func (w *Worker) process(ctx context.Context, job scanner.ClipJob) (ProcessedClip, error) {
+func (w *Worker) process(ctx context.Context, job scanner.ClipJob) ([]ProcessedClip, error) {
 	if job.Silence {
 		logger.Info("clip  noise  dur=%.1fs", job.Duration)
-		return generateNoise(ctx, job.Duration)
+		clip, err := generateNoise(ctx, job.Duration)
+		if err != nil {
+			return nil, err
+		}
+		return []ProcessedClip{clip}, nil
 	}
-	return w.extractClip(ctx, job)
+	return w.extractPieces(ctx, job)
 }
 
-// extractClip runs ffmpeg to pull a segment from a remote URL and encode it
-// to MP3 with fades, loudness normalisation, and a light bandpass filter.
+// extractPieces pulls a window of audio, checks that it sounds like speech,
+// splits it at the pauses between words, and encodes up to
+// maxPiecesPerWindow of those word/phrase-sized pieces.
 //
-// Before encoding, a VAD probe checks for voice-band energy. Clips that score
-// below vadThreshold are rejected with errVADReject. On probe failure the clip
-// is accepted anyway — we prefer false positives over dropping valid content.
-//
-// A random 15% of clips are time-reversed (areverse) for an EVP-style effect.
-func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (ProcessedClip, error) {
-	// Cache hit — skip VAD probe and ffmpeg encode entirely.
-	if data, ok := w.cache.Get(job.Item.Identifier, job.Offset, job.Duration); ok {
-		logger.Debug("cache hit  %s  offset=%.1fs", job.Item.Identifier, job.Offset)
-		return ProcessedClip{
+// The window is fetched once (or read from the cache) into a local temp file,
+// so the analysis pass and every piece encode avoid further network seeks.
+func (w *Worker) extractPieces(ctx context.Context, job scanner.ClipJob) ([]ProcessedClip, error) {
+	path, err := w.loadWindow(ctx, job)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(path)
+
+	env, err := analyzeWindow(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	cv, voiced := speechScore(env)
+	if !voiced || cv < minCentroidCV {
+		return nil, fmt.Errorf("%w (cv=%.2f voiced=%v)", errNotSpeech, cv, voiced)
+	}
+	pieces := findPieces(env.levels)
+	if len(pieces) == 0 {
+		return nil, fmt.Errorf("%w (cv=%.2f, no pauses)", errNotSpeech, cv)
+	}
+
+	found := len(pieces)
+	w.rng.Shuffle(len(pieces), func(i, j int) { pieces[i], pieces[j] = pieces[j], pieces[i] })
+	if len(pieces) > maxPiecesPerWindow {
+		pieces = pieces[:maxPiecesPerWindow]
+	}
+	roles := make([]string, len(pieces))
+	for i, p := range pieces {
+		roles[i] = p.role.String()
+	}
+	logger.Info("window  %s  year=%d  offset=%.0fs  cv=%.2f  pieces=%d/%d %v  title=%q",
+		job.Item.Identifier, job.Item.Year, job.Offset, cv, len(pieces), found, roles, job.Item.Title)
+
+	clips := make([]ProcessedClip, 0, len(pieces))
+	for _, p := range pieces {
+		reversed := w.rng.Float64() < reversalProb
+		role := p.role
+		if reversed {
+			role = role.Reversed()
+		}
+		data, err := encodePiece(ctx, path, p, reversed)
+		if err != nil {
+			logger.Warn("piece %s @%.2fs: %v", job.Item.Identifier, job.Offset+p.start, err)
+			continue
+		}
+		logger.Debug("piece  %s  at=%.2fs  dur=%.2fs  role=%v  rev=%v",
+			job.Item.Identifier, job.Offset+p.start, p.dur(), role, reversed)
+		clips = append(clips, ProcessedClip{
 			Data:       data,
-			Duration:   job.Duration,
+			Duration:   p.dur(),
+			Role:       role,
 			Identifier: job.Item.Identifier,
 			Title:      job.Item.Title,
 			Year:       job.Item.Year,
-		}, nil
+		})
 	}
+	return clips, nil
+}
 
-	// VAD probe — analysis-only pass, no encoding.
-	score, err := vadScore(ctx, job.Item.FileURL, job.Offset, job.Duration)
+// loadWindow writes the job's window of audio to a local temp file and
+// returns its path; the caller removes it. The window is loudness-normalised
+// and band-limited as a whole (loudnorm needs seconds of context to behave),
+// and the encoded window is what the cache stores.
+func (w *Worker) loadWindow(ctx context.Context, job scanner.ClipJob) (string, error) {
+	tmp, err := os.CreateTemp("", "ghost-window-*.mp3")
 	if err != nil {
-		// Probe failed (network hiccup, unsupported format, etc.) — accept.
-		logger.Warn("vad probe %s: %v — accepting", job.Item.Identifier, err)
-	} else if score < vadThreshold {
-		return ProcessedClip{}, errVADReject
+		return "", fmt.Errorf("window temp file: %w", err)
 	}
+	path := tmp.Name()
+	tmp.Close()
 
-	reversed := w.rng.Float64() < reversalProb
-	logger.Info("clip  %s  year=%d  offset=%.1fs  dur=%.1fs  vad=%.2f  rev=%v  title=%q",
-		job.Item.Identifier, job.Item.Year, job.Offset, job.Duration, score, reversed, job.Item.Title)
-
-	fadeIn := 0.3 + w.rng.Float64()*0.5  // 0.3–0.8 s
-	fadeOut := 0.3 + w.rng.Float64()*0.5 // 0.3–0.8 s
-	if fadeIn+fadeOut >= job.Duration {
-		fadeIn = job.Duration * 0.2
-		fadeOut = job.Duration * 0.2
-	}
-	fadeOutStart := job.Duration - fadeOut
-
-	// areverse (when used) comes first so fades are applied to the
-	// already-reversed audio, giving natural in/out on the backwards clip.
-	var afFilter string
-	if reversed {
-		afFilter = fmt.Sprintf(
-			"areverse,afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f,loudnorm=I=-16:LRA=11:TP=-1.5,highpass=f=80,lowpass=f=8000",
-			fadeIn, fadeOutStart, fadeOut,
-		)
-	} else {
-		afFilter = fmt.Sprintf(
-			"afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f,loudnorm=I=-16:LRA=11:TP=-1.5,highpass=f=80,lowpass=f=8000",
-			fadeIn, fadeOutStart, fadeOut,
-		)
+	if data, ok := w.cache.Get(job.Item.Identifier, job.Offset, job.Duration); ok {
+		logger.Debug("cache hit  %s  offset=%.1fs", job.Item.Identifier, job.Offset)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			os.Remove(path)
+			return "", fmt.Errorf("window temp file: %w", err)
+		}
+		return path, nil
 	}
 
 	args := []string{
-		"-loglevel", "error",
+		"-loglevel", "error", "-y",
 		"-ss", fmt.Sprintf("%.3f", job.Offset), // fast seek before -i
 		"-i", job.Item.FileURL,
 		"-t", fmt.Sprintf("%.3f", job.Duration),
 		"-vn", // discard video
-		"-af", afFilter,
+		"-af", "loudnorm=I=-16:LRA=11:TP=-1.5,highpass=f=80,lowpass=f=8000",
+		"-ar", sampleRate,
+		"-ac", channels,
+		"-b:a", windowBitrate,
+		"-f", format,
+		path,
+	}
+
+	winCtx, cancel := context.WithTimeout(ctx, processorTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(winCtx, "ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		os.Remove(path)
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", fmt.Errorf("ffmpeg: %s", msg)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) < minWindowBytes {
+		// Usually a seek past EOF on an item with unknown duration.
+		os.Remove(path)
+		return "", fmt.Errorf("%w (no audio at offset)", errNotSpeech)
+	}
+	if err := w.cache.Put(job.Item.Identifier, job.Offset, job.Duration, data); err != nil {
+		logger.Warn("cache put %s: %v", job.Item.Identifier, err)
+	}
+	return path, nil
+}
+
+// encodePiece cuts one span out of a local window file. Fades are short —
+// just enough to avoid clicks — because the span was already padded into the
+// surrounding pauses.
+func encodePiece(ctx context.Context, path string, s span, reversed bool) ([]byte, error) {
+	af := fmt.Sprintf("afade=t=in:st=0:d=%.3f,afade=t=out:st=%.3f:d=%.3f",
+		pieceFadeIn, s.dur()-pieceFadeOut, pieceFadeOut)
+	if reversed {
+		// areverse first so the fades shape the backwards audio.
+		af = "areverse," + af
+	}
+
+	args := []string{
+		"-loglevel", "error",
+		"-ss", fmt.Sprintf("%.3f", s.start),
+		"-i", path,
+		"-t", fmt.Sprintf("%.3f", s.dur()),
+		"-af", af,
 		"-ar", sampleRate,
 		"-ac", channels,
 		"-b:a", bitrate,
@@ -173,36 +281,24 @@ func (w *Worker) extractClip(ctx context.Context, job scanner.ClipJob) (Processe
 		"pipe:1",
 	}
 
-	clipCtx, cancel := context.WithTimeout(ctx, processorTimeout)
+	pCtx, cancel := context.WithTimeout(ctx, pieceTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(clipCtx, "ffmpeg", args...)
+	cmd := exec.CommandContext(pCtx, "ffmpeg", args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = err.Error()
 		}
-		return ProcessedClip{}, fmt.Errorf("ffmpeg: %s", msg)
+		return nil, fmt.Errorf("ffmpeg: %s", msg)
 	}
 	if stdout.Len() == 0 {
-		return ProcessedClip{}, fmt.Errorf("ffmpeg produced no output")
+		return nil, fmt.Errorf("ffmpeg produced no output")
 	}
-
-	data := stdout.Bytes()
-	if err := w.cache.Put(job.Item.Identifier, job.Offset, job.Duration, data); err != nil {
-		logger.Warn("cache put %s: %v", job.Item.Identifier, err)
-	}
-	return ProcessedClip{
-		Data:       data,
-		Duration:   job.Duration,
-		Identifier: job.Item.Identifier,
-		Title:      job.Item.Title,
-		Year:       job.Item.Year,
-	}, nil
+	return stdout.Bytes(), nil
 }
 
 // generateNoise uses ffmpeg's lavfi anoisesrc to produce a quiet pink-noise
@@ -247,6 +343,32 @@ func generateNoise(ctx context.Context, dur float64) (ProcessedClip, error) {
 		Duration: dur,
 		Silence:  true,
 	}, nil
+}
+
+// EncodeSilence returns dur seconds of digital silence encoded with the same
+// parameters as pieces, for the session to place between them. Silence is
+// encoded once at startup and reused, so concatenation stays byte-level.
+func EncodeSilence(ctx context.Context, dur float64) (ProcessedClip, error) {
+	args := []string{
+		"-loglevel", "error",
+		"-f", "lavfi",
+		"-i", fmt.Sprintf("anullsrc=r=%s:cl=stereo", sampleRate),
+		"-t", fmt.Sprintf("%.3f", dur),
+		"-b:a", bitrate,
+		"-f", format,
+		"pipe:1",
+	}
+
+	sCtx, cancel := context.WithTimeout(ctx, pieceTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(sCtx, "ffmpeg", args...)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil {
+		return ProcessedClip{}, fmt.Errorf("silence: %w", err)
+	}
+	return ProcessedClip{Data: stdout.Bytes(), Duration: dur, Silence: true}, nil
 }
 
 // Pool manages a fixed number of parallel processor workers.

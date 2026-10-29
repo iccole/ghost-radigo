@@ -10,30 +10,38 @@ import (
 
 const (
 	bufferSize  = 32   // max MediaItems held locally
-	minClip     = 0.1  // seconds
-	maxClip     = 2.0  // seconds
 	silenceProb = 0.15 // 15% chance of emitting a noise gap between clips
+
+	// windowSecs is how much audio each job analyses. The processor splits a
+	// window at the pauses between words, so it must be long enough to hold
+	// several pauses; 12 s typically yields 3–10 word/phrase pieces.
+	windowSecs = 12.0
+
+	// offsetGrid snaps window offsets so repeat visits to the same region of
+	// an item hit the disk cache (which buckets offsets to 5 s).
+	offsetGrid = 5.0
 
 	// Silence gaps have their own shorter duration so noise bursts stay brief.
 	minSilence = 0.3 // seconds
 	maxSilence = 1.5 // seconds
 
 	// Drift parameters.
-	normalDriftMax  = 3.0  // max year change per clip under normal drift
-	largeDriftMax   = 15.0 // max year change during an occasional jump
-	largeDriftProb  = 0.10 // probability of a large drift step
-	yearMin         = 1900.0
-	yearMax         = 1980.0
+	normalDriftMax = 3.0  // max year change per clip under normal drift
+	largeDriftMax  = 15.0 // max year change during an occasional jump
+	largeDriftProb = 0.10 // probability of a large drift step
+	yearMin        = 1900.0
+	yearMax        = 1980.0
 
 	// Item selection: items within this many years of currentYear score well.
 	yearWindow = 12.0
 )
 
-// ClipJob describes a segment to be extracted from a media item.
+// ClipJob describes a window of a media item for the processor to analyse
+// and cut into word-sized pieces, or a noise gap.
 type ClipJob struct {
 	Item     fetcher.MediaItem
-	Offset   float64 // Start position in seconds
-	Duration float64 // Clip length in seconds (3–20)
+	Offset   float64 // Window start in seconds
+	Duration float64 // Window length in seconds (noise gap length if Silence)
 	Silence  bool    // If true, emit a silence gap instead of audio
 }
 
@@ -97,12 +105,10 @@ func (s *Scanner) Run(ctx context.Context) error {
 		item := s.buf[idx]
 		s.buf = append(s.buf[:idx], s.buf[idx+1:]...)
 
-		// Select clip parameters.
-		dur := minClip + s.rng.Float64()*(maxClip-minClip)
-		offset := s.pickOffset(item, dur)
+		offset := s.pickOffset(item, windowSecs)
 
 		select {
-		case s.Out <- ClipJob{Item: item, Offset: offset, Duration: dur}:
+		case s.Out <- ClipJob{Item: item, Offset: offset, Duration: windowSecs}:
 		case <-ctx.Done():
 			return nil
 		}
@@ -152,8 +158,8 @@ func (s *Scanner) pickItemIndex() int {
 	return weightedRandom(s.rng, weights)
 }
 
-// pickOffset returns a random start offset that leaves at least dur seconds
-// remaining in the item.
+// pickOffset returns a random start offset, snapped to offsetGrid, that
+// leaves at least dur seconds remaining in the item.
 func (s *Scanner) pickOffset(item fetcher.MediaItem, dur float64) float64 {
 	const maxFileOffset = 900.0 // cap at 15 min to avoid timeout kills on long files
 
@@ -161,13 +167,18 @@ func (s *Scanner) pickOffset(item fetcher.MediaItem, dur float64) float64 {
 		// Unknown or short duration: pick within first 60 s.
 		// 300 s caused frequent past-EOF seeks on short items (78 rpm records
 		// are typically 3–4 min; many archive items report Duration=0).
-		return s.rng.Float64() * 60
+		return snap(s.rng.Float64() * 60)
 	}
 	upper := item.Duration - dur
 	if upper > maxFileOffset {
 		upper = maxFileOffset
 	}
-	return s.rng.Float64() * upper
+	return math.Min(snap(s.rng.Float64()*upper), math.Floor(upper/offsetGrid)*offsetGrid)
+}
+
+// snap rounds an offset to the nearest multiple of offsetGrid.
+func snap(offset float64) float64 {
+	return math.Round(offset/offsetGrid) * offsetGrid
 }
 
 // drift advances currentYear by a random walk, with occasional larger jumps.

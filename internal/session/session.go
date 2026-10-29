@@ -15,12 +15,34 @@ import (
 const MinClips = 5
 
 const (
-	minStitchDur = 7.0  // seconds — minimum composite length
-	maxStitchDur = 10.0 // seconds — maximum composite length
+	minStitchDur = 7.0  // seconds — target composite length is drawn from
+	maxStitchDur = 10.0 // [min, max]; the phrase that crosses it is finished
+
+	maxMiddles = 3 // middle pieces per phrase, drawn from 1..maxMiddles
+
+	// poolCap is how many pieces are held per role; the oldest is dropped
+	// when full. A full pool also relaxes the phrase pattern (see step).
+	poolCap = 6
 )
 
-// Clip is a stitched composite of several raw processor clips concatenated
-// into a single 7–10 second audio blob.
+// Gaps holds pre-encoded silences that the session places between pieces.
+// Either slice may be empty, in which case pieces butt together.
+type Gaps struct {
+	Word   []processor.ProcessedClip // between pieces within a phrase
+	Phrase []processor.ProcessedClip // between phrases
+}
+
+// slot is the role the phrase being built needs next.
+type slot int
+
+const (
+	slotOpening slot = iota
+	slotMiddle
+	slotEnding
+)
+
+// Clip is a stitched composite: a few sentence-like phrases built from pieces
+// of many recordings, concatenated into a single audio blob.
 type Clip struct {
 	Index      int
 	Data       []byte
@@ -30,16 +52,22 @@ type Clip struct {
 	Identifier string
 }
 
-// frag is a single raw processor output held in the accumulation buffer.
+// frag is a single raw processor output held in a pool or the composite buffer.
 type frag struct {
 	data       []byte
 	duration   float64
+	role       processor.Role
 	year       int
 	title      string
 	identifier string
 }
 
-// Session accumulates raw clips into composites and signals listeners.
+// Session assembles pieces into composites and signals listeners.
+//
+// Each composite is a run of phrases. A phrase is an opening piece, 1–3
+// middle pieces and an ending piece (or a single whole-phrase piece), with
+// short word gaps inside the phrase and longer gaps between phrases. Pieces
+// wait in per-role pools until the phrase being built needs them.
 type Session struct {
 	ID         string
 	composites []Clip
@@ -48,14 +76,19 @@ type Session struct {
 	Done       chan struct{} // closed when the session is stopped
 	once       sync.Once
 
-	// accumulation state — only accessed from Manager.Run goroutine, no mutex needed
-	buf       []frag
-	bufDur    float64
-	targetDur float64
-	rng       *mathrand.Rand
+	// assembly state — only accessed from Manager.Run goroutine, no mutex needed
+	pools       [4][]frag // indexed by processor.Role
+	buf         []frag    // composite in progress, gaps included
+	bufDur      float64
+	targetDur   float64
+	next        slot
+	middlesLeft int
+	lastID      string // identifier of the last piece placed
+	gaps        Gaps
+	rng         *mathrand.Rand
 }
 
-func newSession() *Session {
+func newSession(gaps Gaps) *Session {
 	b := make([]byte, 6)
 	rand.Read(b) //nolint:errcheck
 	rng := mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
@@ -64,31 +97,152 @@ func newSession() *Session {
 		Notify:    make(chan struct{}, 64),
 		Done:      make(chan struct{}),
 		rng:       rng,
+		gaps:      gaps,
 		targetDur: minStitchDur + rng.Float64()*(maxStitchDur-minStitchDur),
 	}
 }
 
-// ingest adds a raw processor clip to the buffer. When the buffer reaches
-// targetDur, the fragments are concatenated into a composite clip and stored.
-// Must only be called from Manager.Run (single goroutine — no mutex on buf).
+// ingest pools a piece by role, then places pooled pieces into the phrase
+// being built for as long as the next slot can be filled.
+// Must only be called from Manager.Run (single goroutine — no mutex on pools).
 func (s *Session) ingest(f frag) {
+	pool := &s.pools[f.role]
+	if len(*pool) >= poolCap {
+		*pool = (*pool)[1:]
+	}
+	*pool = append(*pool, f)
+
+	for s.step() {
+	}
+}
+
+// step fills the next slot of the current phrase if it can, and reports
+// whether it made progress.
+func (s *Session) step() bool {
+	var f frag
+	var ok bool
+	switch s.next {
+	case slotOpening:
+		if f, ok = s.take(processor.RoleOpening); !ok {
+			f, ok = s.take(processor.RoleWhole)
+		}
+	case slotMiddle:
+		f, ok = s.take(processor.RoleMiddle)
+	case slotEnding:
+		if f, ok = s.take(processor.RoleEnding); !ok {
+			f, ok = s.take(processor.RoleWhole)
+		}
+	}
+	if !ok {
+		// The slot's role is scarce. Once some pool is full — pieces are
+		// about to be dropped — let any piece stand in rather than stall.
+		if !s.poolFull() {
+			return false
+		}
+		f, _ = s.takeAny()
+	}
+	s.fill(f)
+	return true
+}
+
+// fill places f in the current slot and advances the phrase.
+func (s *Session) fill(f frag) {
+	switch s.next {
+	case slotOpening:
+		s.place(f, s.gaps.Phrase)
+		if f.role == processor.RoleWhole {
+			s.endPhrase()
+			return
+		}
+		s.next = slotMiddle
+		s.middlesLeft = 1 + s.rng.Intn(maxMiddles)
+	case slotMiddle:
+		s.place(f, s.gaps.Word)
+		// Wrap the phrase up early once the composite is long enough, so
+		// composites don't overshoot their target by several middles.
+		if s.middlesLeft--; s.middlesLeft == 0 || s.bufDur >= s.targetDur {
+			s.next = slotEnding
+		}
+	case slotEnding:
+		s.place(f, s.gaps.Word)
+		s.endPhrase()
+	}
+}
+
+// take removes a piece of the given role from its pool, preferring one from
+// a different recording than the last piece placed so sources interleave.
+func (s *Session) take(role processor.Role) (frag, bool) {
+	pool := s.pools[role]
+	if len(pool) == 0 {
+		return frag{}, false
+	}
+	i := 0
+	for j, f := range pool {
+		if f.identifier != s.lastID {
+			i = j
+			break
+		}
+	}
+	f := pool[i]
+	s.pools[role] = append(pool[:i], pool[i+1:]...)
+	return f, true
+}
+
+// takeAny removes a piece from the fullest pool.
+func (s *Session) takeAny() (frag, bool) {
+	best := processor.Role(0)
+	for r := range s.pools {
+		if len(s.pools[r]) > len(s.pools[best]) {
+			best = processor.Role(r)
+		}
+	}
+	return s.take(best)
+}
+
+// poolFull reports whether any role's pool is at capacity.
+func (s *Session) poolFull() bool {
+	for _, p := range s.pools {
+		if len(p) >= poolCap {
+			return true
+		}
+	}
+	return false
+}
+
+// place appends a piece to the composite, preceded by a random gap from
+// gaps unless it is the composite's first piece.
+func (s *Session) place(f frag, gaps []processor.ProcessedClip) {
+	if len(s.buf) > 0 && len(gaps) > 0 {
+		g := gaps[s.rng.Intn(len(gaps))]
+		s.buf = append(s.buf, frag{data: g.Data, duration: g.Duration})
+		s.bufDur += g.Duration
+	}
 	s.buf = append(s.buf, f)
 	s.bufDur += f.duration
+	s.lastID = f.identifier
+}
 
-	if s.bufDur < s.targetDur {
-		return
+// endPhrase closes the current phrase and publishes the composite once it
+// has reached its target length.
+func (s *Session) endPhrase() {
+	s.next = slotOpening
+	if s.bufDur >= s.targetDur {
+		s.publish()
 	}
+}
 
-	// Concatenate all fragment bytes into one audio blob.
+// publish concatenates the buffer into a composite, stores it and notifies
+// listeners. Gaps carry no identifier, so metadata comes from the last piece.
+func (s *Session) publish() {
 	total := 0
 	for _, fr := range s.buf {
 		total += len(fr.data)
 	}
 	data := make([]byte, 0, total)
-	last := s.buf[len(s.buf)-1]
 	for _, fr := range s.buf {
 		data = append(data, fr.data...)
 	}
+	last := s.buf[len(s.buf)-1]
 
 	composite := Clip{
 		Data:       data,
@@ -137,24 +291,27 @@ func (s *Session) Stop() {
 }
 
 // Manager is the sole consumer of the processor output channel.
-// It routes raw clips into active sessions for accumulation.
+// It routes pieces into active sessions for assembly.
 type Manager struct {
 	mu       sync.RWMutex
 	sessions map[string]*Session
 	in       <-chan processor.ProcessedClip
+	gaps     Gaps
 }
 
-// NewManager creates a Manager that reads from the processor pool output.
-func NewManager(in <-chan processor.ProcessedClip) *Manager {
+// NewManager creates a Manager that reads from the processor pool output and
+// gives every session the same pre-encoded gaps.
+func NewManager(in <-chan processor.ProcessedClip, gaps Gaps) *Manager {
 	return &Manager{
 		sessions: make(map[string]*Session),
 		in:       in,
+		gaps:     gaps,
 	}
 }
 
 // Create registers and returns a new session.
 func (m *Manager) Create() *Session {
-	s := newSession()
+	s := newSession(m.gaps)
 	m.mu.Lock()
 	m.sessions[s.ID] = s
 	m.mu.Unlock()
@@ -176,8 +333,8 @@ func (m *Manager) Remove(id string) {
 	m.mu.Unlock()
 }
 
-// Run drains the processor channel and routes non-silence clips into all
-// active sessions for accumulation. Blocks until ctx is cancelled.
+// Run drains the processor channel and routes non-silence pieces into all
+// active sessions for assembly. Blocks until ctx is cancelled.
 func (m *Manager) Run(ctx context.Context) error {
 	for {
 		select {
@@ -191,6 +348,7 @@ func (m *Manager) Run(ctx context.Context) error {
 			f := frag{
 				data:       clip.Data,
 				duration:   clip.Duration,
+				role:       clip.Role,
 				year:       clip.Year,
 				title:      clip.Title,
 				identifier: clip.Identifier,

@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 )
 
-// Cache is a simple disk cache for processed audio clips.
+// Cache is a simple disk cache for the audio windows the processor analyses.
 // Keys are deterministic so the same (identifier, offset, duration) region
 // always maps to the same file, surviving process restarts.
 //
 // The offset is quantised into 5-second buckets and the duration is rounded
-// to the nearest second, so clips from the same region of a file reuse cached
-// data even when the scanner picks a slightly different start point.
+// to the nearest second; the scanner snaps window offsets to the same grid,
+// so revisiting a region of a file skips the network fetch.
 type Cache struct {
 	dir string
 }
@@ -38,7 +38,7 @@ func DefaultDir() string {
 	return filepath.Join(os.TempDir(), "ghost-radio")
 }
 
-// Get returns cached bytes for the given clip parameters, or (nil, false) if
+// Get returns cached bytes for the given window parameters, or (nil, false) if
 // not present. Safe to call on a nil *Cache.
 func (c *Cache) Get(identifier string, offset, duration float64) ([]byte, bool) {
 	if c == nil {
@@ -65,10 +65,10 @@ func (c *Cache) Put(identifier string, offset, duration float64, data []byte) er
 	return os.Rename(tmp, p)
 }
 
-// path returns the file path for a clip.
+// path returns the file path for a window.
 func (c *Cache) path(identifier string, offset, duration float64) string {
-	bucket := int(math.Round(offset/5)) * 5   // 5-second buckets
-	durSec := int(math.Round(duration))        // nearest second
+	bucket := int(math.Round(offset/5)) * 5 // 5-second buckets
+	durSec := int(math.Round(duration))     // nearest second
 	name := fmt.Sprintf("%s_%ds_%ds.mp3", identifier, bucket, durSec)
 	return filepath.Join(c.dir, name)
 }
